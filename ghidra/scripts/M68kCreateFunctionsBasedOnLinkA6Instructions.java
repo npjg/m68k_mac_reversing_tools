@@ -105,9 +105,5 @@ public class M68kCreateFunctionsBasedOnLinkA6Instructions extends GhidraScript {
                 }
             }
         }
-
-        println("\nSummary:");
-        println("Found " + foundCount + " LINK.W A6 instructions");
-        println("Created " + createdCount + " new functions");
     }
 }
