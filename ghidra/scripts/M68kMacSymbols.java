@@ -6,8 +6,10 @@ import java.util.*;
 import ghidra.app.script.GhidraScript;
 import ghidra.framework.Application;
 import ghidra.program.model.address.*;
+import ghidra.program.model.data.*;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.symbol.*;
+import ghidra.program.model.mem.MemoryBlock;
 
 public class M68kMacSymbols extends GhidraScript {
 
@@ -77,6 +79,17 @@ public class M68kMacSymbols extends GhidraScript {
                                 String symbol = new String(getBytes(symbolAddr, length));
                                 symbol = symbol.replace(" ", "_");
                                 func.setName(symbol, SourceType.ANALYSIS);
+
+                                // Create string data at the symbol location.
+                                // TODO: Put the control bytes and such too into a structure
+                                // so it reads more nicely in the disasm.
+                                DataTypeManager dtm = currentProgram.getDataTypeManager();
+                                StringDataType stringDt = new StringDataType(dtm);
+                                Listing listing = currentProgram.getListing();
+                                // Make sure we can create data here.
+                                if (listing.isUndefined(symbolAddr, symbolAddr.add(length - 1))) {
+                                    listing.createData(symbolAddr, stringDt, length);
+                                }
                             }
                         }
                     }
