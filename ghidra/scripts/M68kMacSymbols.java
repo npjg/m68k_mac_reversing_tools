@@ -86,10 +86,13 @@ public class M68kMacSymbols extends GhidraScript {
                                 DataTypeManager dtm = currentProgram.getDataTypeManager();
                                 StringDataType stringDt = new StringDataType(dtm);
                                 Listing listing = currentProgram.getListing();
-                                // Make sure we can create data here.
-                                if (listing.isUndefined(symbolAddr, symbolAddr.add(length - 1))) {
-                                    listing.createData(symbolAddr, stringDt, length);
-                                }
+
+                                // Undefine any existing data in the range to recreate it
+                                Address endAddr = symbolAddr.add(length - 1);
+                                listing.clearCodeUnits(symbolAddr, endAddr, false);
+
+                                // Create the string data type
+                                listing.createData(symbolAddr, stringDt, length);
                             }
                         }
                     }
