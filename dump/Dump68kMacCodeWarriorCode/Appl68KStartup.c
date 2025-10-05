@@ -312,7 +312,7 @@ static char *__decomp_data__(char *ptr,char *datasegment)
 /* Input....: pointer to reloaction base address		*/
 /* Returns..: pointer to end of relocation data			*/
 /****************************************************************/
-static char *__reloc_compr__(char *ptr,char *segment,unsigned long relocbase)
+static char *__reloc_compr__(char *ptr,char *segment,unsigned long relocbase, unsigned long a5_base)
 {
 	long	offset;
 	unsigned long relocations;
@@ -354,9 +354,10 @@ static char *__reloc_compr__(char *ptr,char *segment,unsigned long relocbase)
 		write_be32(position, relocated_value);
 
 		// Log the relocation details
-		printf("  Offset 0x%lX (0x%lX): 0x%lX + 0x%lX = 0x%lX\n",
+		printf("  Offset 0x%lX + 0x%lX = 0x%lX: 0x%lX + 0x%lX = 0x%lX\n",
 			offset,
-			offset + relocbase,
+			a5_base,
+			offset + a5_base,
 			unrelocated_value,
 			relocbase,
 			relocated_value);
@@ -378,16 +379,16 @@ static char *__relocate__(char *xref, char *segm, unsigned long a5_base, unsigne
 
 	// Relocate references to DATA segment (A5).
 	printf("*** RELOCATE DATA 0 ***\n");
-	ptr = __reloc_compr__(ptr, segm, a5_base);
+	ptr = __reloc_compr__(ptr, segm, a5_base, a5_base);
 
 	// Relocate references to CODE segment 1.
 	printf("*** RELOCATE CODE 1 ***\n");
-	ptr = __reloc_compr__(ptr, segm, code1_base);
+	ptr = __reloc_compr__(ptr, segm, code1_base, a5_base);
 
 	// Relocate references to same CODE segment.
 	// TODO: Understand what this actually is.
 	printf("RELOCATE REFERENCES TO SAME CODE SEGMENT ***");
-	ptr = __reloc_compr__(ptr, segm, (long)segm);
+	ptr = __reloc_compr__(ptr, segm, (long)segm, a5_base);
 
 	return ptr;
 }
