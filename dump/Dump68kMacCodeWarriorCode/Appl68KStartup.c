@@ -10,7 +10,7 @@
 #include <string.h>
 
 void* __Startup__(char *data0_resource, char *code1_resource);
-static char *		__relocate__(char *xref, char *segm, long a5_base, long code1_base);	// forward
+static char *		__relocate__(char *xref, char *segm, unsigned long a5_base, unsigned long code1_base);	// forward
 static char		*__decomp_data__(char *ptr,char *datasegment);	// forward
 
 const long data_bytes_above_a5 = 0x15878;
@@ -221,17 +221,24 @@ void* __Startup__(char *data0_resource, char *code1_resource)
 /* Returns..: pointer to data after init data			*/
 /****************************************************************/
 
-// Helper functions to read big-endian integers
-static inline long read_be32(const char* ptr) {
+// Helper functions to read and write big-endian integers
+static inline unsigned long read_be32(const char* ptr) {
 	return ((unsigned char)ptr[0] << 24) |
 	       ((unsigned char)ptr[1] << 16) |
 	       ((unsigned char)ptr[2] << 8) |
 	       ((unsigned char)ptr[3]);
 }
 
-static inline short read_be16(const char* ptr) {
+static inline unsigned short read_be16(const char* ptr) {
 	return ((unsigned char)ptr[0] << 8) |
 	       ((unsigned char)ptr[1]);
+}
+
+static inline void write_be32(char* ptr, unsigned long value) {
+	ptr[0] = (value >> 24) & 0xFF;
+	ptr[1] = (value >> 16) & 0xFF;
+	ptr[2] = (value >> 8) & 0xFF;
+	ptr[3] = value & 0xFF;
 }
 
 //
@@ -305,14 +312,16 @@ static char *__decomp_data__(char *ptr,char *datasegment)
 /* Input....: pointer to reloaction base address		*/
 /* Returns..: pointer to end of relocation data			*/
 /****************************************************************/
-static char *__reloc_compr__(char *ptr,char *segment,long relocbase)
+static char *__reloc_compr__(char *ptr,char *segment,unsigned long relocbase)
 {
-	long	offset,relocations;
+	long	offset;
+	unsigned long relocations;
 	char	c;
 
 	relocations = read_be32(ptr);
 	ptr += 4;
 
+	printf("Relocating %ld references (base 0x%lx)\n", relocations, relocbase);
 	for(offset=0L; relocations>0; relocations--)
 	{
 		c=*ptr++;
@@ -335,7 +344,22 @@ static char *__reloc_compr__(char *ptr,char *segment,long relocbase)
 				offset=(lword_val<<2)>>1;
 			}
 		}
-		*(long *)(segment+offset)+=relocbase;
+
+		// Get the current value before relocation (big-endian)
+		char *position = segment + offset;
+		unsigned long unrelocated_value = read_be32(position);
+
+		// Perform the relocation and write back in big-endian format
+		unsigned long relocated_value = unrelocated_value + relocbase;
+		write_be32(position, relocated_value);
+
+		// Log the relocation details
+		printf("  Offset 0x%lX (0x%lX): 0x%lX + 0x%lX = 0x%lX\n",
+			offset,
+			offset + relocbase,
+			unrelocated_value,
+			relocbase,
+			relocated_value);
 	}
 	return ptr;
 }
@@ -348,17 +372,21 @@ static char *__reloc_compr__(char *ptr,char *segment,long relocbase)
 /* Input....: code1_base: base address of CODE segment 1	*/
 /* Returns..: pointer to data after xref			*/
 /****************************************************************/
-static char *__relocate__(char *xref, char *segm, long a5_base, long code1_base)
+static char *__relocate__(char *xref, char *segm, unsigned long a5_base, unsigned long code1_base)
 {
 	char *ptr = xref;
 
 	// Relocate references to DATA segment (A5).
+	printf("*** RELOCATE DATA 0 ***\n");
 	ptr = __reloc_compr__(ptr, segm, a5_base);
 
 	// Relocate references to CODE segment 1.
+	printf("*** RELOCATE CODE 1 ***\n");
 	ptr = __reloc_compr__(ptr, segm, code1_base);
 
 	// Relocate references to same CODE segment.
+	// TODO: Understand what this actually is.
+	printf("RELOCATE REFERENCES TO SAME CODE SEGMENT ***");
 	ptr = __reloc_compr__(ptr, segm, (long)segm);
 
 	return ptr;
