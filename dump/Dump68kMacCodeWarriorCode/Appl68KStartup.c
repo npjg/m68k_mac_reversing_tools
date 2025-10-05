@@ -5,149 +5,212 @@
 /* Copyright.: Copyright � 1993-1997 Metrowerks, Inc.			*/
 /************************************************************************/
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+void* __Startup__(char *data0_resource, char *code1_resource);
 static char *		__relocate__(char *xref, char *segm, char *a5_base, char *code1_base);	// forward
 static char		*__decomp_data__(char *ptr,char *datasegment);	// forward
+
+const long data_bytes_above_a5 = 0x15878;
+const long data_bytes_below_a5 = 0x20B0;
+
+int main(int argc, char* argv[])
+{
+    char* data0_resource = NULL;
+    char* code1_resource = NULL;
+    void* a5_world_base = NULL;
+    FILE* file = NULL;
+    unsigned long file_size;
+    const char* data0_file = NULL;
+    const char* code1_file = NULL;
+    const char* dump_file = "a5_world_dump.bin";
+
+    // Parse command line arguments
+    if (argc < 3) {
+        printf("Usage: %s <DATA_0_file> <CODE_1_file> [output_dump_file]\n", argv[0]);
+        printf("  Creates a memory dump of the A5 world for static analysis\n");
+        return 1;
+    }
+
+    data0_file = argv[1];
+    code1_file = argv[2];
+    if (argc > 3) {
+        dump_file = argv[3];
+    }
+
+    // Load DATA 0 resource
+    if (data0_file != NULL) {
+        file = fopen(data0_file, "rb");
+        if (file == NULL) {
+            printf("ERROR: Cannot open DATA 0 resource file: %s\n", data0_file);
+            goto cleanup;
+        }
+
+        // Get file size
+        fseek(file, 0, SEEK_END);
+        file_size = ftell(file);
+        fseek(file, 0, SEEK_SET);
+
+        // Allocate buffer and read file
+        data0_resource = (char*)malloc(file_size);
+        if (data0_resource == NULL) {
+            printf("ERROR: Cannot allocate memory for DATA 0 resource (%ld bytes)\n", file_size);
+            goto cleanup;
+        }
+
+        if (fread(data0_resource, 1, file_size, file) != file_size) {
+            printf("ERROR: Failed to read DATA 0 resource file\n");
+            goto cleanup;
+        }
+
+        fclose(file);
+        file = NULL;
+    }
+
+    // Load CODE 1 resource
+    if (code1_file != NULL) {
+        file = fopen(code1_file, "rb");
+        if (file == NULL) {
+            printf("ERROR: Cannot open CODE 1 resource file: %s\n", code1_file);
+            goto cleanup;
+        }
+
+        // Get file size
+        fseek(file, 0, SEEK_END);
+        file_size = ftell(file);
+        fseek(file, 0, SEEK_SET);
+
+        if (file_size <= 0) {
+            printf("ERROR: Invalid CODE 1 resource file size: %ld\n", file_size);
+            goto cleanup;
+        }
+
+        // Allocate buffer and read file
+        code1_resource = (char*)malloc(file_size);
+        if (code1_resource == NULL) {
+            printf("ERROR: Cannot allocate memory for CODE 1 resource (%ld bytes)\n", file_size);
+            goto cleanup;
+        }
+
+        if (fread(code1_resource, 1, file_size, file) != file_size) {
+            printf("ERROR: Failed to read CODE 1 resource file\n");
+            goto cleanup;
+        }
+
+        fclose(file);
+        file = NULL;
+    }
+
+    // Call the startup function with the loaded resources
+    a5_world_base = __Startup__(data0_resource, code1_resource);
+    if (a5_world_base != NULL) {
+        FILE* dump_output = fopen(dump_file, "wb");
+        if (dump_output == NULL) {
+            printf("ERROR: Cannot create dump file: %s\n", dump_file);
+            goto cleanup;
+        }
+
+        // Write the entire A5 world to dump file
+        const long total_a5_world_size = data_bytes_below_a5 + data_bytes_above_a5;
+        size_t written = fwrite(a5_world_base, 1, total_a5_world_size, dump_output);
+        fclose(dump_output);
+
+        if (written == total_a5_world_size) {
+            printf("Memory dump created successfully: %ld bytes written\n", (long)written);
+            printf("A5 offset within dump: 0x%lx (decimal: %ld)\n", data_bytes_below_a5, data_bytes_below_a5);
+        } else {
+            printf("ERROR: Incomplete memory dump - only %ld of %ld bytes written\n",
+                   (long)written, total_a5_world_size);
+            goto cleanup;
+        }
+    } else {
+        printf("ERROR: A5 world setup failed\n");
+        goto cleanup;
+    }
+
+    if (data0_resource) free(data0_resource);
+    if (code1_resource) free(code1_resource);
+    if (a5_world_base) free(a5_world_base);
+
+    return 0;
+
+cleanup:
+    // Clean up file handle if still open
+    if (file != NULL) {
+        fclose(file);
+    }
+
+    // Clean up allocated resources
+    if (data0_resource) free(data0_resource);
+    if (code1_resource) free(code1_resource);
+    if (a5_world_base) free(a5_world_base);
+
+    return 1;
+}
 
 /****************************************************************/
 /* Purpose..: The Startup routine for Applications		*/
 /* Input....: ---						*/
 /* Returns..: ---						*/
 /****************************************************************/
-extern asm void __Startup__(void)
-{	// this must be the first code module in this file
-functionstart:
+void* __Startup__(char *data0_resource, char *code1_resource)
+{
+	// Allocate memory for the entire A5 world.
+    const long total_a5_world_size = data_bytes_below_a5 + data_bytes_above_a5;
+    char* a5_world_base = (char*)malloc(total_a5_world_size);
+    if (a5_world_base == NULL) {
+        return NULL;
+    }
+    memset(a5_world_base, 0, total_a5_world_size);
 
-	suba.l	a6,a6			// helps for stack crawl
+    // Calculate A5 position within the allocated memory.
+    char* a5_ptr = a5_world_base + data_bytes_below_a5;
 
-	// clear the global data area
+    // Set up pointers for different regions.
+    //char* data_area_below = a5_world_base;   // Below A5.
+    //char* data_area_above = a5_ptr + 32 + 8; // Above A5 (skip header).
+    //char* data_area_above_end = a5_ptr + data_bytes_above_a5;
 
-	subq.l	#4,sp			// get CODE resource 0
-	move.l	#'CODE',-(sp)
-	clr.w	-(sp)
-	_GetResource
-	move.l	(sp),d0			// keep handle on stack for later ReleaseResource
-	beq	error
-	movea.l	d0,a0
-	movea.l	(a0),a0
-	move.l	(a0)+,d7		// d7:data bytes above DATAPTR
-	move.l	(a0),d6			// d6:data bytes below DATAPTR
-	_ReleaseResource		// release CODE resource 0
+    // Initialize global data area from DATA 0 resource
+    if (data0_resource != NULL) {
+        char* data0_ptr = (char*)data0_resource;
 
-	moveq	#0,d0			// clear data area below DATAPTR
-	movea.l	a5,a0
-	suba.l	d6,a0
-	bra	loop1e
-loop1:	move.b	d0,(a0)+
-loop1e:	cmpa.l	a5,a0
-	blt	loop1
+        // DATA 0 resource layout:
+        // +---------------------------------+
+        // | long:   offset of CODE 1 xrefs  |---+
+        // +---------------------------------+   |
+        // | char[]: compressed init data    |   |
+        // +---------------------------------+   |
+        // | char[]: compressed DATA 0 xrefs |   |
+        // +---------------------------------+   |
+        // | char[]: compressed CODE 1 xrefs |<--+
+        // +---------------------------------+
 
-	lea	32+8(a5),a0		// clear data area above DATAPTR
-	lea	0(a5,d7.l),a1
-	bra	loop2e
-loop2:	move.b	d0,(a0)+
-loop2e:	cmpa.l	a1,a0
-	blt	loop2
+        // Decompress initialization data into A5 world
+        char* init_data_ptr = data0_ptr + 4;  // Skip CODE 1 xrefs offset.
+        char* xref_data_ptr = __decomp_data__(init_data_ptr, a5_ptr);
 
-	// initialize global data area
+        // Store the base address of CODE segment 1 in the A5 world
+        // Export 0 [A5 + 0x22]: CODE 1 offset 0x0 after header
+        // a5_ptr[0x22] = code1_resource;
 
-	subq.l	#4,sp			// get the DATA Resource 0
-	move.l	#'DATA',-(sp)
-	clr.w	-(sp)
-	_GetResource
-	movea.l	(sp),a0			// keep handle on stack for later ReleaseResource
-	move.l	a0,d0
-	beq	error
-//
-// DATA 0 resource layout:
-//
-// +---------------------------------+
-// | long:   offset of CODE 1 xrefs  |---+
-// +---------------------------------+   |
-// | char[]: compressed init data    |   |
-// +---------------------------------+   |
-// | char[]: compressed DATA 0 xrefs |   |
-// +---------------------------------+   |
-// | char[]: compressed CODE 1 xrefs |<--+
-// +---------------------------------+
-//
-	move.l	a5,-(sp)
-	move.l	(a0),a0			// push pointer to init data
-	pea	4(a0)
-	jsr	__decomp_data__
-	addq.l	#8,sp
+        // Relocate the data segment (A5 world)
+        __relocate__(xref_data_ptr, a5_ptr, a5_ptr, code1_resource);
 
-	// relocate data and CODE segment 1
+        // Relocate CODE segment 1
+        __relocate__(xref_data_ptr, code1_resource, a5_ptr, code1_resource);
 
-	lea	functionstart-4,a1
-	move.l	a1,__CODE1Base__	// store the base address of CODE segment 1 in CODE1Base
+        printf("A5 world allocated at: %p\n", a5_world_base);
+        printf("A5 pointer at: %p (offset 0x%lx)\n", a5_ptr, data_bytes_below_a5);
+        printf("Below A5 size: 0x%lx bytes\n", data_bytes_below_a5);
+        printf("Above A5 size: 0x%lx bytes\n", data_bytes_above_a5);
+        printf("Total A5 world size: 0x%lx bytes\n", total_a5_world_size);
+    }
 
-	move.l	a5,a1		// relocate the data segment
-	jsr	__relocate__
-
-	move.l	__CODE1Base__,a1	// relocate CODE segment 1
-	jsr	__relocate__
-
-	_ReleaseResource		// release DATA resource
-
-	// initialize our A5 world checking routine
-	jsr	__A5WorldSetup__
-
-	// setup __flushinstruction__ global and flush cache
-
-	clr.b	__flushinstruction__
-	move.w	#_Unimplemented,d0
-	_GetToolTrapAddress
-	move.l	a0,-(a7)
-	move.w	#_HWPriv,d0
-	_GetOSTrapAddress
-	cmpa.l	(a7)+,a0
-	beq.s	dontflush
-	move.b	#true,__flushinstruction__
-	_FlushInstructionCache
-dontflush:
-
-	// patch LoadSeg, UnloadSeg & ExitToShell traps
-
-	move.w	#_LoadSeg,D0		// LoadSeg
-	_GetToolTrapAddress
-	move.l	A0,__oldLoadSeg__
-	move.w	#_UnLoadSeg,D0		// UnloadSeg
-	_GetToolTrapAddress
-	move.l	A0,__oldUnloadSeg__
-	move.w	#_ExitToShell,D0	// ExitToShell
-	_GetToolTrapAddress
-	move.l	A0,__oldExitToShell__
-
-	move.w	#_LoadSeg,D0		// LoadSeg
-	lea	__LoadSeg__,A0
-	_SetToolTrapAddress
-	move.w	#_UnLoadSeg,D0		// UnloadSeg
-	lea	__UnloadSeg__,A0
-	_SetToolTrapAddress
-	move.w	#_ExitToShell,D0	// ExitToShell
-	lea	__ExitToShell__,A0
-	_SetToolTrapAddress
-
-	// intitialize static C++ data objects and call main()
-
-	jsr	__PreInit__
-	jsr	__InitCode__		// data init code
-	pea	argv			// fake dummy argv
-	tst.b	__4byteints__
-	beq.s	int161
-	clr.w	-(sp)			// fake dummy argc 32-bit int
-int161:	clr.w	-(sp)			// fake dummy argc 16-bit int
-	jsr	main			// call user main
-	addq.l	#6,sp
-
-	clr.l	-(sp)
-	jsr	exit			// call exit(0)
-
-__ExitToShell__:
-	jsr	__TrapUnpatch__
-error:	_ExitToShell
-
-argv:	dc.l	0
+    // Return the base of the allocated A5 world for dumping
+    return a5_world_base;
 }
 
 /****************************************************************/
@@ -219,7 +282,7 @@ static char *__decomp_data__(char *ptr,char *datasegment)
 			case 0x02: to+=4; *to++=0xFF; *to++=*ptr++; *to++=*ptr++; *to++=*ptr++; continue;
 			case 0x03: *to++=0xA9; *to++=0xF0; to+=2; *to++=*ptr++; *to++=*ptr++; to++; *to++=*ptr++; continue;
 			case 0x04: *to++=0xA9; *to++=0xF0; to++; *to++=*ptr++; *to++=*ptr++; *to++=*ptr++; to++; *to++=*ptr++; continue;
-			default:   SysError(dsLoadErr);
+			default: exit(15);
 			}
 			break;
 		}
@@ -271,217 +334,24 @@ static char *__reloc_compr__(char *ptr,char *segment,long relocbase)
 
 /****************************************************************/
 /* Purpose..: Relocate code/data references of segment		*/
-/* Input....: a0: pointer to xref data				*/
-/* Input....: a1: pointer to current segment			*/
+/* Input....: xref: pointer to xref data			*/
+/* Input....: segm: pointer to current segment			*/
+/* Input....: a5_base: base address for A5 world (DATA segment) */
+/* Input....: code1_base: base address of CODE segment 1	*/
 /* Returns..: pointer to data after xref			*/
 /****************************************************************/
-static asm char *__relocate__(char *xref:__A0,char *segm:__A1)
+static char *__relocate__(char *xref, char *segm, char *a5_base, char *code1_base)
 {
-	move.l	a2,-(sp)
-	move.l	a1,a2			// a2: base address of relocated segment
+	char *ptr = xref;
 
-	move.l	a5,-(a7)		// relocate references to DATA segment
-	move.l	a2,-(a7)
-	move.l	a0,-(a7)
-	jsr	__reloc_compr__
+	// Relocate references to DATA segment (A5).
+	ptr = __reloc_compr__(ptr, segm, (long)a5_base);
 
-	move.l	__CODE1Base__,-(a7)	// relocate references to CODE segment 1
-	move.l	a2,-(a7)
-	move.l	a0,-(a7)
-	jsr	__reloc_compr__
+	// Relocate references to CODE segment 1.
+	ptr = __reloc_compr__(ptr, segm, (long)code1_base);
 
-	move.l	a2,-(a7)		// relocate references to same CODE segment
-	move.l	a2,-(a7)
-	move.l	a0,-(a7)
-	jsr	__reloc_compr__
+	// Relocate references to same CODE segment.
+	ptr = __reloc_compr__(ptr, segm, (long)segm);
 
-	lea	3*3*4(a7),a7		// remove c function arguments
-
-	move.l	(sp)+,a2
-	rts
-}
-/****************************************************************/
-/* Purpose..: Unrelocate code/data references of segment	*/
-/* Input....: a0: pointer to xref data				*/
-/* Input....: a1: pointer to current segment			*/
-/* Returns..: pointer to data after xref			*/
-/****************************************************************/
-static asm char *__unrelocate__(char *xref:__A0,char *segm:__A1)
-{
-	move.l	a2,-(sp)
-	move.l	a1,a2			// a2: base address of relocated segment
-
-	move.l	a5,-(a7)		// relocate references to DATA segment
-	neg.l	(a7)
-	move.l	a2,-(a7)
-	move.l	a0,-(a7)
-	jsr	__reloc_compr__
-
-	move.l	__CODE1Base__,-(a7)	// relocate references to CODE segment 1
-	neg.l	(a7)
-	move.l	a2,-(a7)
-	move.l	a0,-(a7)
-	jsr	__reloc_compr__
-
-	move.l	a2,-(a7)		// relocate references to same CODE segment
-	neg.l	(a7)
-	move.l	a2,-(a7)
-	move.l	a0,-(a7)
-	jsr	__reloc_compr__
-
-	lea	3*3*4(a7),a7		// remove c function arguments
-
-	move.l	(sp)+,a2
-	rts
-}
-
-/****************************************************************/
-/* Purpose..: Check if this is the correct A5 world		*/
-/* Input....: true: _LoadSeg; false: _UnloadSeg			*/
-/* Returns..: ---						*/
-/****************************************************************/
-static asm void __A5WorldCheck__(short is_loadseg)
-{
-	cmp.l	our_a5,A5
-	bne.s	other_a5_world
-	rts
-
-other_a5_world:				// this is not our A5 world (use original trap routines)
-	movem.l	a0/a5,-(sp)		// save used registers
-//
-// Stack layout at this point:
-// 0:	dc.l	saved A5
-// 4:	dc.l	saved A0
-// 8:	dc.l	return address (no longer needed)
-// 12:	dc.w	is_loadseg
-// 14:	_LoadSeg/_UnloadSeg arguments ...
-//
-	move.l	our_a5,a5		// setup our a5 so we can use globals
-	move.l	__oldLoadSeg__,a0	// load original _LoadSeg/_UnloadSeg address into a0
-	tst.w	12(sp)
-	bne.s	ldseg
-	move.l	__oldUnloadSeg__,a0
-ldseg:	move.l	a0,10(sp)		// store return address (destroys argument)
-	movem.l	(sp)+,a0/a5		// restore used registers
-	addq.w	#2,sp			// adjust stack pointer
-	rts				// jump to original _LoadSeg/_UnloadSeg
-
-our_a5:	dc.l	0			// memory location used to store our A5
-	entry	__A5WorldSetup__
-	lea	our_a5,a0
-	move.l	a5,(a0)
-	rts
-}
-
-/****************************************************************/
-/* Purpose..: FIxup Segment address				*/
-/* Input....: new segment address (in A0)			*/
-/* Input....: segment number (in D0)				*/
-/* Returns..: ---						*/
-/****************************************************************/
-static asm void __PatchSegmentMap__(void *segaddr:__A0,short segn:__D0)
-{
-	lea	SEGMAPNAME,a1
-	mulu.w	#sizeof(segment_map),d0
-	move.l	a0,struct(segment_map.codeptr)-sizeof(segment_map)(a1,d0.L)
-	rts
-}
-
-/****************************************************************/
-/* Purpose..: Load a segment into memory and relocate it	*/
-/* Input....: (sp) has the address of jumptable entry		*/
-/* Returns..: does not return directly				*/
-/****************************************************************/
-extern asm pascal void __LoadSeg__(void)
-{
-	move.w	#1,-(sp)
-	jsr	__A5WorldCheck__
-	addq.w	#2,sp
-
-	movem.l	d0-d2/a0-a2,-(sp)		// save registers
-	subq.l	#2,24(sp)			// adjust return address
-	movea.l	24(sp),a2			// a2: base address of jumptable entry
-
-	move.l	__segcallbacks.PreLoadSeg,d0
-	beq.s	nopreload
-	move.l	d0,a0
-	move.w	struct(JumpTableEntry.segment)(a2),-(sp)
-	jsr	(a0)
-	addq.l	#2,sp
-nopreload:
-	st	0x0A5E				// ResLoad
-	subq.l	#4,sp				// get the CODE Resource n
-retryload:
-	move.l	#'CODE',-(sp)
-	move.w	struct(JumpTableEntry.segment)(a2),-(sp)
-	_GetResource
-	move.l	(sp),d0
-	bne.s	noerr
-	move.l	__segcallbacks.LoadSegErr,d0
-	bne.s	loaderrcallback
-	moveq	#dsLoadErr,d0
-	_SysError
-loaderrcallback:
-	move.l	d0,a0
-	move.w	struct(JumpTableEntry.segment)(a2),-(sp)
-	jsr	(a0)
-	addq.l	#2,sp
-	bra	retryload
-
-noerr:	tst.b	0x0BB2					// SegHiEnable
-	beq.s	nohi
-	move.l	d0,a0					// move the code resource to high memory
-	_MoveHHi
-nohi:	move.l	(sp),a0					// lock code resource
-	_HLock
-
-	move.l	(sp)+,a0				// get the stripped address of code segment
-	movea.l	(a0),a0
-	move.l	a0,d0
-	_StripAddress
-	move.l	d0,a0
-	move.l	a0,-(sp)				// save address
-
-	// patch segment map
-
-	move.w	struct(JumpTableEntry.segment)(a2),d0
-	jsr	__PatchSegmentMap__
-
-	// relocate segment
-
-	move.l	a0,a1
-	add.l	struct(SegmentHeader.xrefoffset)(a0),a0
-	jsr	__relocate__				// relocate the new segment
-
-	// set jumptable to loaded state
-
-	movea.l	(sp)+,a0				// a0: address of segment
-	movea.l	a5,a1					// a1: address of first jumptable entry
-	add.l	struct(SegmentHeader.jtloffset)(a0),a1
-	move.w	struct(SegmentHeader.jtentries)(a0),d0	// d0: number of jumptable entries
-	move.l	a0,d1					// d1: code resource base address
-	bra.s	loope
-loop:	move.w	#0x4EF9,struct(JumpTableEntry.jumpinstruction)(a1)
-	add.l	d1,struct(JumpTableEntry.jumpaddress)(a1)
-	addq.l	#sizeof(struct JumpTableEntry),a1
-loope:	dbf	d0,loop
-
-	tst.b	__flushinstruction__
-	beq.s	dontflush
-	_FlushInstructionCache
-dontflush:
-	move.l	__segcallbacks.PostLoadSeg,d0
-	beq.s	nopostload
-	move.l	d0,a0
-	move.w	struct(JumpTableEntry.segment)(a2),-(sp)
-	jsr	(a0)
-	addq.l	#2,sp
-
-nopostload:
-	movem.l	(sp)+,d0-d2/a0-a2		// restore registers
-
-	tst.b	0x012D				// LoadTrap: true: call debugger when LoadSeg is called
-	beq.s	notrap
-	_Debugger
-notrap:	rts					// return to new address
+	return ptr;
 }
