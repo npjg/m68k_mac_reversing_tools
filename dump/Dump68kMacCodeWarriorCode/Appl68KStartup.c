@@ -220,11 +220,18 @@ void* __Startup__(char *data0_resource, char *code1_resource)
 /* Returns..: pointer to data after init data			*/
 /****************************************************************/
 
-typedef union GetData {
-	char	raw[4];
-	short	word;
-	long	lword;
-}	GetData;
+// Helper functions to read big-endian integers
+static inline long read_be32(const char* ptr) {
+	return ((unsigned char)ptr[0] << 24) |
+	       ((unsigned char)ptr[1] << 16) |
+	       ((unsigned char)ptr[2] << 8) |
+	       ((unsigned char)ptr[3]);
+}
+
+static inline short read_be16(const char* ptr) {
+	return ((unsigned char)ptr[0] << 8) |
+	       ((unsigned char)ptr[1]);
+}
 
 //
 //	Pack Patterns:
@@ -242,14 +249,14 @@ typedef union GetData {
 
 static char *__decomp_data__(char *ptr,char *datasegment)
 {
-	GetData	ldata;
 	int	i,data;
 	char	*to,c;
 
 	for(i=0; i<3; i++)
 	{
-		ldata.raw[0]=*ptr++; ldata.raw[1]=*ptr++; ldata.raw[2]=*ptr++; ldata.raw[3]=*ptr++;
-		to=datasegment+ldata.lword;
+		long offset = read_be32(ptr);
+		ptr += 4;
+		to=datasegment+offset;
 		while(1)
 		{
 			data=*ptr++;
@@ -299,12 +306,11 @@ static char *__decomp_data__(char *ptr,char *datasegment)
 /****************************************************************/
 static char *__reloc_compr__(char *ptr,char *segment,long relocbase)
 {
-	GetData	data;
 	long	offset,relocations;
 	char	c;
 
-	data.raw[0]=*ptr++; data.raw[1]=*ptr++; data.raw[2]=*ptr++; data.raw[3]=*ptr++;
-	relocations=data.lword;
+	relocations = read_be32(ptr);
+	ptr += 4;
 
 	for(offset=0L; relocations>0; relocations--)
 	{
@@ -315,16 +321,17 @@ static char *__reloc_compr__(char *ptr,char *segment,long relocbase)
 		}
 		else
 		{
-			data.raw[0]=c; data.raw[1]=*ptr++;
 			if(c&0x40)
 			{	//	15-bit unsigned delta
-
-				offset+=(short)(data.word<<2)>>1;
+				short word_val = read_be16(ptr - 1);  // c is first byte, read second byte
+				ptr++;
+				offset+=(short)(word_val<<2)>>1;
 			}
 			else
 			{	//	direct signed 31-bit offset
-				data.raw[2]=*ptr++; data.raw[3]=*ptr++;
-				offset=(data.lword<<2)>>1;
+				long lword_val = read_be32(ptr - 1);  // c is first byte, read remaining 3 bytes
+				ptr += 3;
+				offset=(lword_val<<2)>>1;
 			}
 		}
 		*(long *)(segment+offset)+=relocbase;
