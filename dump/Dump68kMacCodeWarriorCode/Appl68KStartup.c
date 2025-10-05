@@ -9,12 +9,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-void* __Startup__(char *data0_resource, char *code1_resource);
+void* __Startup__(char *data0_resource, char *code1_resource, unsigned long code1_size);
 static char *		__relocate__(char *xref, char *segm, unsigned long a5_base, unsigned long code1_base);	// forward
 static char		*__decomp_data__(char *ptr,char *datasegment);	// forward
 
 const long data_bytes_above_a5 = 0x15878;
 const long data_bytes_below_a5 = 0x20B0;
+const long code_resource_offset = 0x60000;
 
 int main(int argc, char* argv[])
 {
@@ -23,9 +24,10 @@ int main(int argc, char* argv[])
     void* a5_world_base = NULL;
     FILE* file = NULL;
     unsigned long file_size;
+    unsigned long code1_size = 0;
     const char* data0_file = NULL;
     const char* code1_file = NULL;
-    const char* dump_file = "a5_world_dump.bin";
+    const char* dump_file = "dump.bin";
 
     // Parse command line arguments
     if (argc < 3) {
@@ -86,6 +88,8 @@ int main(int argc, char* argv[])
             goto cleanup;
         }
 
+        code1_size = file_size; // Store the size for later use
+
         // Allocate buffer and read file
         code1_resource = (char*)malloc(file_size);
         if (code1_resource == NULL) {
@@ -103,7 +107,7 @@ int main(int argc, char* argv[])
     }
 
     // Call the startup function with the loaded resources
-    a5_world_base = __Startup__(data0_resource, code1_resource);
+    a5_world_base = __Startup__(data0_resource, code1_resource, code1_size);
     if (a5_world_base != NULL) {
         FILE* dump_output = fopen(dump_file, "wb");
         if (dump_output == NULL) {
@@ -111,17 +115,23 @@ int main(int argc, char* argv[])
             goto cleanup;
         }
 
-        // Write the entire A5 world to dump file
+        // Calculate total dump size (A5 world + CODE resource at 0x10000)
         const long total_a5_world_size = data_bytes_below_a5 + data_bytes_above_a5;
-        size_t written = fwrite(a5_world_base, 1, total_a5_world_size, dump_output);
+        const long total_dump_size = code_resource_offset + code1_size;
+
+        // Write the entire dump to file
+        size_t written = fwrite(a5_world_base, 1, total_dump_size, dump_output);
         fclose(dump_output);
 
-        if (written == total_a5_world_size) {
+        if (written == total_dump_size) {
             printf("Memory dump created successfully: %ld bytes written\n", (long)written);
             printf("A5 offset within dump: 0x%lx (decimal: %ld)\n", data_bytes_below_a5, data_bytes_below_a5);
+            printf("CODE resource offset within dump: 0x%lx (decimal: %ld)\n", code_resource_offset, code_resource_offset);
+            printf("A5 world size: 0x%lx bytes\n", total_a5_world_size);
+            printf("CODE resource size: 0x%lx bytes\n", code1_size);
         } else {
             printf("ERROR: Incomplete memory dump - only %ld of %ld bytes written\n",
-                   (long)written, total_a5_world_size);
+                   (long)written, total_dump_size);
             goto cleanup;
         }
     } else {
@@ -154,20 +164,22 @@ cleanup:
 /* Input....: ---						*/
 /* Returns..: ---						*/
 /****************************************************************/
-void* __Startup__(char *data0_resource, char *code1_resource)
+void* __Startup__(char *data0_resource, char *code1_resource, unsigned long code1_size)
 {
-	// Allocate memory for the entire A5 world.
+	// Allocate memory for the entire dump (A5 world + CODE resource at 0x10000).
     const long total_a5_world_size = data_bytes_below_a5 + data_bytes_above_a5;
-    char* a5_world_base = (char*)malloc(total_a5_world_size);
-    if (a5_world_base == NULL) {
+    const long total_dump_size = code_resource_offset + code1_size;
+    char* dump_base = (char*)malloc(total_dump_size);
+    if (dump_base == NULL) {
         return NULL;
     }
-    memset(a5_world_base, 0, total_a5_world_size);
+    memset(dump_base, 0, total_dump_size);
 
     // Calculate A5 position within the allocated memory.
-    char* a5_ptr = a5_world_base + data_bytes_below_a5;
+    char* a5_ptr = dump_base + data_bytes_below_a5;
+    char* code_ptr = dump_base + code_resource_offset;
 	long a5_unrelocated = data_bytes_below_a5;
-	long code1_unrelocated = total_a5_world_size;
+	long code1_unrelocated = code_resource_offset;
 
     // Set up pointers for different regions.
     //char* data_area_below = a5_world_base;   // Below A5.
@@ -197,21 +209,29 @@ void* __Startup__(char *data0_resource, char *code1_resource)
         // Export 0 [A5 + 0x22]: CODE 1 offset 0x0 after header
         // a5_ptr[0x22] = code1_resource;
 
+        // Copy CODE resource to its position in the dump
+        if (code1_resource != NULL) {
+            memcpy(code_ptr, code1_resource, code1_size);
+        }
+
         // Relocate the data segment (A5 world)
         __relocate__(xref_data_ptr, a5_ptr, a5_unrelocated, code1_unrelocated);
 
-        // Relocate CODE segment 1
-        __relocate__(xref_data_ptr, code1_resource, a5_unrelocated, code1_unrelocated);
+        // Relocate CODE segment 1 (now in the dump at 0x10000)
+        __relocate__(xref_data_ptr, code_ptr, a5_unrelocated, code1_unrelocated);
 
-        printf("A5 world allocated at: %p\n", a5_world_base);
+        printf("Dump allocated at: %p\n", dump_base);
         printf("A5 pointer at: %p (offset 0x%lx)\n", a5_ptr, data_bytes_below_a5);
+        printf("CODE pointer at: %p (offset 0x%lx)\n", code_ptr, code_resource_offset);
         printf("Below A5 size: 0x%lx bytes\n", data_bytes_below_a5);
         printf("Above A5 size: 0x%lx bytes\n", data_bytes_above_a5);
         printf("Total A5 world size: 0x%lx bytes\n", total_a5_world_size);
+        printf("CODE resource size: 0x%lx bytes\n", code1_size);
+        printf("Total dump size: 0x%lx bytes\n", total_dump_size);
     }
 
-    // Return the base of the allocated A5 world for dumping
-    return a5_world_base;
+    // Return the base of the allocated dump for writing
+    return dump_base;
 }
 
 /****************************************************************/
@@ -361,6 +381,14 @@ static char *__reloc_compr__(char *ptr,char *segment,unsigned long relocbase, un
 			unrelocated_value,
 			relocbase,
 			relocated_value);
+
+		if (offset == 0xA6DE) {
+			printf("");
+		}
+
+		if (offset == 0xA6DE + 8) {
+			printf("");
+		}
 	}
 	return ptr;
 }
