@@ -215,10 +215,11 @@ void* __Startup__(char *data0_resource, char *code1_resource, unsigned long code
         }
 
         // Relocate the data segment (A5 world)
-        __relocate__(xref_data_ptr, a5_ptr, a5_unrelocated, code1_unrelocated);
+		// TODO: Is this wrong? Do we need to set the relocations to read AFTER this one?
+        xref_data_ptr = __relocate__(xref_data_ptr, a5_ptr, a5_unrelocated, code1_unrelocated);
 
-        // Relocate CODE segment 1 (now in the dump at 0x10000)
-        __relocate__(xref_data_ptr, code_ptr, a5_unrelocated, code1_unrelocated);
+        // Relocate CODE segment 1 (now in the dump at 0x60000)
+        xref_data_ptr = __relocate__(xref_data_ptr, code_ptr, a5_unrelocated, code1_unrelocated);
 
         printf("Dump allocated at: %p\n", dump_base);
         printf("A5 pointer at: %p (offset 0x%lx)\n", a5_ptr, data_bytes_below_a5);
@@ -381,14 +382,6 @@ static char *__reloc_compr__(char *ptr,char *segment,unsigned long relocbase, un
 			unrelocated_value,
 			relocbase,
 			relocated_value);
-
-		if (offset == 0xA6DE) {
-			printf("");
-		}
-
-		if (offset == 0xA6DE + 8) {
-			printf("");
-		}
 	}
 	return ptr;
 }
