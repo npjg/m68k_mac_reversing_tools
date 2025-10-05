@@ -10,7 +10,7 @@
 #include <string.h>
 
 void* __Startup__(char *data0_resource, char *code1_resource);
-static char *		__relocate__(char *xref, char *segm, char *a5_base, char *code1_base);	// forward
+static char *		__relocate__(char *xref, char *segm, long a5_base, long code1_base);	// forward
 static char		*__decomp_data__(char *ptr,char *datasegment);	// forward
 
 const long data_bytes_above_a5 = 0x15878;
@@ -81,7 +81,6 @@ int main(int argc, char* argv[])
         fseek(file, 0, SEEK_END);
         file_size = ftell(file);
         fseek(file, 0, SEEK_SET);
-
         if (file_size <= 0) {
             printf("ERROR: Invalid CODE 1 resource file size: %ld\n", file_size);
             goto cleanup;
@@ -167,6 +166,8 @@ void* __Startup__(char *data0_resource, char *code1_resource)
 
     // Calculate A5 position within the allocated memory.
     char* a5_ptr = a5_world_base + data_bytes_below_a5;
+	long a5_unrelocated = data_bytes_below_a5;
+	long code1_unrelocated = total_a5_world_size;
 
     // Set up pointers for different regions.
     //char* data_area_below = a5_world_base;   // Below A5.
@@ -197,10 +198,10 @@ void* __Startup__(char *data0_resource, char *code1_resource)
         // a5_ptr[0x22] = code1_resource;
 
         // Relocate the data segment (A5 world)
-        __relocate__(xref_data_ptr, a5_ptr, a5_ptr, code1_resource);
+        __relocate__(xref_data_ptr, a5_ptr, a5_unrelocated, code1_unrelocated);
 
         // Relocate CODE segment 1
-        __relocate__(xref_data_ptr, code1_resource, a5_ptr, code1_resource);
+        __relocate__(xref_data_ptr, code1_resource, a5_unrelocated, code1_unrelocated);
 
         printf("A5 world allocated at: %p\n", a5_world_base);
         printf("A5 pointer at: %p (offset 0x%lx)\n", a5_ptr, data_bytes_below_a5);
@@ -347,15 +348,15 @@ static char *__reloc_compr__(char *ptr,char *segment,long relocbase)
 /* Input....: code1_base: base address of CODE segment 1	*/
 /* Returns..: pointer to data after xref			*/
 /****************************************************************/
-static char *__relocate__(char *xref, char *segm, char *a5_base, char *code1_base)
+static char *__relocate__(char *xref, char *segm, long a5_base, long code1_base)
 {
 	char *ptr = xref;
 
 	// Relocate references to DATA segment (A5).
-	ptr = __reloc_compr__(ptr, segm, (long)a5_base);
+	ptr = __reloc_compr__(ptr, segm, a5_base);
 
 	// Relocate references to CODE segment 1.
-	ptr = __reloc_compr__(ptr, segm, (long)code1_base);
+	ptr = __reloc_compr__(ptr, segm, code1_base);
 
 	// Relocate references to same CODE segment.
 	ptr = __reloc_compr__(ptr, segm, (long)segm);
