@@ -1,1 +1,487 @@
-/************************************************************************//* Project...: C++ and ANSI-C Compiler Environment			*//* Name......: Startup.c						*//* Purpose...: 68K application startup code example			*//* Copyright.: Copyright © 1993-1997 Metrowerks, Inc.			*//************************************************************************/#pragma	near_code			// all code references must be 16-bit PC relative#pragma far_data	off		// all data references must be 16-bit A4 relative#pragma exceptions	off		// no exceptions thrown in startup code#pragma RTTI		off		// no RTTI infos#include <Types.h>#include <Errors.h>#include <Memory.h>#include <Resources.h>#include <Processes.h>#include <Assembler.h>#include <CPlusLib.h>#include <NMWException.h>#include <Exception68K.h>#include "StartupLib.h"extern far void abort(void);#pragma overload extern far void abort(void);extern far void exit(int status);#pragma overload extern far void exit(int status);extern void		__Startup__(void);	// startup code entry pointextern pascal void	__LoadSeg__(void);	// segment loader codeextern far int		main(void);		// this is the user main() called by __Startup__()extern far void		__InitCode__(void);	// this is data init code called by __Startup__()extern char		__4byteints__;		// true: 4-byte ints; false 2-byte intsextern far segment_map	SEGMAPNAME[];		// exception segment mapextern			far void __PreInit__(void);	// function called before global initialization#pragma overload	far void __PreInit__(void);typedef struct SegmentHeader CODEHeader;QDGlobals		qd;			// storage space for Quickdraw globals 206 bytesDestructorChain	*__global_destructor_chain;	// chain of global objects that need destructionstruct	SegmentLoadCallbacks __segcallbacks;	// callback structurevoid		*__local_destructor_chain;	// dummy, was: chain of local objects that need destructionstatic Boolean	__flushinstruction__;		// true: flush instruction cachestatic Ptr	__CODE1Base__;			// base address of CODE segment 1static long	__oldLoadSeg__;			// old LoadSeg trap addressstatic long	__oldUnloadSeg__;		// old UnloadSeg trap addressstatic long	__oldExitToShell__;		// old ExitToShell trap addressstatic void		__A5WorldCheck__(short is_loadseg);static void		__A5WorldSetup__(void);extern void		__TrapUnpatch__(void);static pascal void	__UnloadSeg__(Ptr);				// forwardstatic char *		__relocate__(char *xref:__A0,char *segm:__A1);	// forwardstatic char		*__decomp_data__(char *ptr,char *datasegment);	// forward/****************************************************************//* Purpose..: The Startup routine for Applications		*//* Input....: ---						*//* Returns..: ---						*//****************************************************************/extern asm void __Startup__(void){	// this must be the first code module in this filefunctionstart:	suba.l	a6,a6			// helps for stack crawl	// clear the global data area	subq.l	#4,sp			// get CODE resource 0	move.l	#'CODE',-(sp)	clr.w	-(sp)	_GetResource	move.l	(sp),d0			// keep handle on stack for later ReleaseResource	beq	error	movea.l	d0,a0	movea.l	(a0),a0	move.l	(a0)+,d7		// d7:data bytes above DATAPTR	move.l	(a0),d6			// d6:data bytes below DATAPTR	_ReleaseResource		// release CODE resource 0	moveq	#0,d0			// clear data area below DATAPTR	movea.l	a5,a0	suba.l	d6,a0	bra	loop1eloop1:	move.b	d0,(a0)+loop1e:	cmpa.l	a5,a0	blt	loop1	lea	32+8(a5),a0		// clear data area above DATAPTR	lea	0(a5,d7.l),a1	bra	loop2eloop2:	move.b	d0,(a0)+loop2e:	cmpa.l	a1,a0	blt	loop2	// initialize global data area	subq.l	#4,sp			// get the DATA Resource 0	move.l	#'DATA',-(sp)	clr.w	-(sp)	_GetResource	movea.l	(sp),a0			// keep handle on stack for later ReleaseResource	move.l	a0,d0	beq	error//// DATA 0 resource layout://// +---------------------------------+// | long:   offset of CODE 1 xrefs  |---+// +---------------------------------+   |// | char[]: compressed init data    |   |// +---------------------------------+   |// | char[]: compressed DATA 0 xrefs |   |// +---------------------------------+   |// | char[]: compressed CODE 1 xrefs |<--+// +---------------------------------+//	move.l	a5,-(sp)	move.l	(a0),a0			// push pointer to init data	pea	4(a0)	jsr	__decomp_data__	addq.l	#8,sp	// relocate data and CODE segment 1	lea	functionstart-4,a1	move.l	a1,__CODE1Base__	// store the base address of CODE segment 1 in CODE1Base	move.l	a5,a1		// relocate the data segment	jsr	__relocate__	move.l	__CODE1Base__,a1	// relocate CODE segment 1	jsr	__relocate__	_ReleaseResource		// release DATA resource	// initialize our A5 world checking routine	jsr	__A5WorldSetup__	// setup __flushinstruction__ global and flush cache	clr.b	__flushinstruction__	move.w	#_Unimplemented,d0	_GetToolTrapAddress	move.l	a0,-(a7)	move.w	#_HWPriv,d0	_GetOSTrapAddress	cmpa.l	(a7)+,a0	beq.s	dontflush	move.b	#true,__flushinstruction__	_FlushInstructionCachedontflush:	// patch LoadSeg, UnloadSeg & ExitToShell traps	move.w	#_LoadSeg,D0		// LoadSeg	_GetToolTrapAddress	move.l	A0,__oldLoadSeg__	move.w	#_UnLoadSeg,D0		// UnloadSeg	_GetToolTrapAddress	move.l	A0,__oldUnloadSeg__	move.w	#_ExitToShell,D0	// ExitToShell	_GetToolTrapAddress	move.l	A0,__oldExitToShell__	move.w	#_LoadSeg,D0		// LoadSeg	lea	__LoadSeg__,A0	_SetToolTrapAddress	move.w	#_UnLoadSeg,D0		// UnloadSeg	lea	__UnloadSeg__,A0	_SetToolTrapAddress	move.w	#_ExitToShell,D0	// ExitToShell	lea	__ExitToShell__,A0	_SetToolTrapAddress	// intitialize static C++ data objects and call main()	jsr	__PreInit__	jsr	__InitCode__		// data init code	pea	argv			// fake dummy argv	tst.b	__4byteints__	beq.s	int161	clr.w	-(sp)			// fake dummy argc 32-bit intint161:	clr.w	-(sp)			// fake dummy argc 16-bit int	jsr	main			// call user main	addq.l	#6,sp	clr.l	-(sp)	jsr	exit			// call exit(0)__ExitToShell__:	jsr	__TrapUnpatch__error:	_ExitToShellargv:	dc.l	0}/****************************************************************//* Purpose..: Decompress the DATA resource			*//* Input....: pointer to DATA resource data			*//* Input....: pointer to A5 resource				*//* Returns..: pointer to data after init data			*//****************************************************************/typedef union GetData {	char	raw[4];	short	word;	long	lword;}	GetData; ////	Pack Patterns:////	0x1xxx xxxx: <raw data>		x+1 (1..128)	raw data bytes//	0x01xx xxxx:			x+1 (1..64)		<x> 0x00 data bytes//	0x001x xxxx: yyyy yyyy		x+2 (2..33)		<x> <y> data bytes//	0x0001 xxxx:			x+1 (1..16)		<x> 0xFF data bytes//	0x0000 0001:			pattern: 0x00000000FFFFXXXX//	0x0000 0010:			pattern: 0x00000000FFXXXXXX//	0x0000 0011:			pattern: 0xA9F00000XXXX00XX//	0x0000 0100:			pattern: 0xA9F000XXXXXX00XX//	0x0000 0000:	end of data//static char *__decomp_data__(char *ptr,char *datasegment){	GetData	ldata;	int	i,data;	char	*to,c;	for(i=0; i<3; i++)	{		ldata.raw[0]=*ptr++; ldata.raw[1]=*ptr++; ldata.raw[2]=*ptr++; ldata.raw[3]=*ptr++;		to=datasegment+ldata.lword;		while(1)		{			data=*ptr++;			if(data&0x80)			{	//	decompress (x&0x7f)+1 raw data bytes				data&=0x7F; do *to++=*ptr++; while(--data>=0); continue;			}			if(data&0x40)			{	//	decompress (x&0x3f)+1 0x00 data bytes//				data&=0x3F; c=0x00; goto cloop;				to+=(data&0x3F)+1; continue;	//	data is already initilized to 0x00			}			if(data&0x20)			{	//	decompress (x&0x1f)+2 repeating data bytes				data=(data&0x1F)+1; c=*ptr++; goto cloop;			}			if(data&0x10)			{	//	decompress (x&0x0f)+1 0xFF data bytes				data&=0x0F; c=0xFF;			cloop:	do *to++=c; while(--data>=0); continue;			}			switch(data)			{			case 0x00: break;//			case 0x01: *to++=0x00; *to++=0x00; *to++=0x00; *to++=0x00; *to++=0xFF; *to++=0xFF; *to++=*ptr++; *to++=*ptr++; continue;//			case 0x02: *to++=0x00; *to++=0x00; *to++=0x00; *to++=0x00; *to++=0xFF; *to++=*ptr++; *to++=*ptr++; *to++=*ptr++; continue;//			case 0x03: *to++=0xA9; *to++=0xF0; *to++=0x00; *to++=0x00; *to++=*ptr++; *to++=*ptr++; *to++=0x00; *to++=*ptr++; continue;//			case 0x04: *to++=0xA9; *to++=0xF0; *to++=0x00; *to++=*ptr++; *to++=*ptr++; *to++=*ptr++; *to++=0x00; *to++=*ptr++; continue;			case 0x01: to+=4; *to++=0xFF; *to++=0xFF; *to++=*ptr++; *to++=*ptr++; continue;			case 0x02: to+=4; *to++=0xFF; *to++=*ptr++; *to++=*ptr++; *to++=*ptr++; continue;			case 0x03: *to++=0xA9; *to++=0xF0; to+=2; *to++=*ptr++; *to++=*ptr++; to++; *to++=*ptr++; continue;			case 0x04: *to++=0xA9; *to++=0xF0; to++; *to++=*ptr++; *to++=*ptr++; *to++=*ptr++; to++; *to++=*ptr++; continue;			default:   SysError(dsLoadErr);			}			break;		}	}	return ptr;}/****************************************************************//* Purpose..: Relocate code/data references of a segment	*//* Input....: pointer to relocation data			*//* Input....: pointer to segments base address			*//* Input....: pointer to reloaction base address		*//* Returns..: pointer to end of relocation data			*//****************************************************************/static char *__reloc_compr__(char *ptr,char *segment,long relocbase){	GetData	data;	long	offset,relocations;	char	c;	data.raw[0]=*ptr++; data.raw[1]=*ptr++; data.raw[2]=*ptr++; data.raw[3]=*ptr++;	relocations=data.lword;	for(offset=0L; relocations>0; relocations--)	{		c=*ptr++;		if(c&0x80)		{	//	8-bit signed delta			c<<=1; offset+=c;		}		else		{			data.raw[0]=c; data.raw[1]=*ptr++;			if(c&0x40)			{	//	15-bit unsigned delta								offset+=(short)(data.word<<2)>>1;			}			else			{	//	direct signed 31-bit offset				data.raw[2]=*ptr++; data.raw[3]=*ptr++;				offset=(data.lword<<2)>>1;			}		}		*(long *)(segment+offset)+=relocbase;	}	return ptr;}/****************************************************************//* Purpose..: Relocate code/data references of segment		*//* Input....: a0: pointer to xref data				*//* Input....: a1: pointer to current segment			*//* Returns..: pointer to data after xref			*//****************************************************************/static asm char *__relocate__(char *xref:__A0,char *segm:__A1){	move.l	a2,-(sp)	move.l	a1,a2			// a2: base address of relocated segment	move.l	a5,-(a7)		// relocate references to DATA segment	move.l	a2,-(a7)	move.l	a0,-(a7)	jsr	__reloc_compr__	move.l	__CODE1Base__,-(a7)	// relocate references to CODE segment 1	move.l	a2,-(a7)	move.l	a0,-(a7)	jsr	__reloc_compr__	move.l	a2,-(a7)		// relocate references to same CODE segment	move.l	a2,-(a7)	move.l	a0,-(a7)	jsr	__reloc_compr__	lea	3*3*4(a7),a7		// remove c function arguments	move.l	(sp)+,a2	rts}/****************************************************************//* Purpose..: Unrelocate code/data references of segment	*//* Input....: a0: pointer to xref data				*//* Input....: a1: pointer to current segment			*//* Returns..: pointer to data after xref			*//****************************************************************/static asm char *__unrelocate__(char *xref:__A0,char *segm:__A1){	move.l	a2,-(sp)	move.l	a1,a2			// a2: base address of relocated segment	move.l	a5,-(a7)		// relocate references to DATA segment	neg.l	(a7)	move.l	a2,-(a7)	move.l	a0,-(a7)	jsr	__reloc_compr__	move.l	__CODE1Base__,-(a7)	// relocate references to CODE segment 1	neg.l	(a7)	move.l	a2,-(a7)	move.l	a0,-(a7)	jsr	__reloc_compr__	move.l	a2,-(a7)		// relocate references to same CODE segment	neg.l	(a7)	move.l	a2,-(a7)	move.l	a0,-(a7)	jsr	__reloc_compr__	lea	3*3*4(a7),a7		// remove c function arguments	move.l	(sp)+,a2	rts}/****************************************************************//* Purpose..: Check if this is the correct A5 world		*//* Input....: true: _LoadSeg; false: _UnloadSeg			*//* Returns..: ---						*//****************************************************************/static asm void __A5WorldCheck__(short is_loadseg){	cmp.l	our_a5,A5	bne.s	other_a5_world	rtsother_a5_world:				// this is not our A5 world (use original trap routines)	movem.l	a0/a5,-(sp)		// save used registers//// Stack layout at this point:// 0:	dc.l	saved A5// 4:	dc.l	saved A0// 8:	dc.l	return address (no longer needed)// 12:	dc.w	is_loadseg// 14:	_LoadSeg/_UnloadSeg arguments ...//	move.l	our_a5,a5		// setup our a5 so we can use globals	move.l	__oldLoadSeg__,a0	// load original _LoadSeg/_UnloadSeg address into a0	tst.w	12(sp)	bne.s	ldseg	move.l	__oldUnloadSeg__,a0ldseg:	move.l	a0,10(sp)		// store return address (destroys argument)	movem.l	(sp)+,a0/a5		// restore used registers 	addq.w	#2,sp			// adjust stack pointer	rts				// jump to original _LoadSeg/_UnloadSegour_a5:	dc.l	0			// memory location used to store our A5	entry	__A5WorldSetup__	lea	our_a5,a0	move.l	a5,(a0)	rts}/****************************************************************//* Purpose..: FIxup Segment address				*//* Input....: new segment address (in A0)			*//* Input....: segment number (in D0)				*//* Returns..: ---						*//****************************************************************/static asm void __PatchSegmentMap__(void *segaddr:__A0,short segn:__D0){	lea	SEGMAPNAME,a1	mulu.w	#sizeof(segment_map),d0	move.l	a0,struct(segment_map.codeptr)-sizeof(segment_map)(a1,d0.L)	rts}/****************************************************************//* Purpose..: Load a segment into memory and relocate it	*//* Input....: (sp) has the address of jumptable entry		*//* Returns..: does not return directly				*//****************************************************************/extern asm pascal void __LoadSeg__(void){	move.w	#1,-(sp)	jsr	__A5WorldCheck__	addq.w	#2,sp	movem.l	d0-d2/a0-a2,-(sp)		// save registers	subq.l	#2,24(sp)			// adjust return address	movea.l	24(sp),a2			// a2: base address of jumptable entry	move.l	__segcallbacks.PreLoadSeg,d0	beq.s	nopreload	move.l	d0,a0	move.w	struct(JumpTableEntry.segment)(a2),-(sp)	jsr	(a0)	addq.l	#2,spnopreload:	st	0x0A5E				// ResLoad	subq.l	#4,sp				// get the CODE Resource nretryload:	move.l	#'CODE',-(sp)	move.w	struct(JumpTableEntry.segment)(a2),-(sp)	_GetResource	move.l	(sp),d0	bne.s	noerr	move.l	__segcallbacks.LoadSegErr,d0	bne.s	loaderrcallback	moveq	#dsLoadErr,d0	_SysErrorloaderrcallback:	move.l	d0,a0	move.w	struct(JumpTableEntry.segment)(a2),-(sp)	jsr	(a0)	addq.l	#2,sp	bra	retryloadnoerr:	tst.b	0x0BB2					// SegHiEnable	beq.s	nohi	move.l	d0,a0					// move the code resource to high memory	_MoveHHinohi:	move.l	(sp),a0					// lock code resource	_HLock	move.l	(sp)+,a0				// get the stripped address of code segment	movea.l	(a0),a0	move.l	a0,d0	_StripAddress	move.l	d0,a0	move.l	a0,-(sp)				// save address	// patch segment map	move.w	struct(JumpTableEntry.segment)(a2),d0	jsr	__PatchSegmentMap__	// relocate segment	move.l	a0,a1	add.l	struct(SegmentHeader.xrefoffset)(a0),a0	jsr	__relocate__				// relocate the new segment	// set jumptable to loaded state 	movea.l	(sp)+,a0				// a0: address of segment	movea.l	a5,a1					// a1: address of first jumptable entry	add.l	struct(SegmentHeader.jtloffset)(a0),a1	move.w	struct(SegmentHeader.jtentries)(a0),d0	// d0: number of jumptable entries	move.l	a0,d1					// d1: code resource base address	bra.s	loopeloop:	move.w	#0x4EF9,struct(JumpTableEntry.jumpinstruction)(a1)	add.l	d1,struct(JumpTableEntry.jumpaddress)(a1)	addq.l	#sizeof(struct JumpTableEntry),a1loope:	dbf	d0,loop	tst.b	__flushinstruction__	beq.s	dontflush	_FlushInstructionCachedontflush:	move.l	__segcallbacks.PostLoadSeg,d0	beq.s	nopostload	move.l	d0,a0	move.w	struct(JumpTableEntry.segment)(a2),-(sp)	jsr	(a0)	addq.l	#2,spnopostload:	movem.l	(sp)+,d0-d2/a0-a2		// restore registers	tst.b	0x012D				// LoadTrap: true: call debugger when LoadSeg is called	beq.s	notrap	_Debuggernotrap:	rts					// return to new address}/****************************************************************//* Purpose..: Unload a segment from memory			*//*		this function replaces the _UnloadSeg trap !!!	*//* Input....: routine address on stack				*//* Returns..: ---						*//****************************************************************/static pascal asm void __UnloadSeg__(Ptr routineAddr){	move.w	#0,-(sp)	jsr	__A5WorldCheck__	addq.w	#2,sp	move.l	a2,-(sp)			// save a2 register	move.l	8(sp),a2			// a2:address of function jtentry	cmp.w	#0x4EF9,struct(JumpTableEntry.jumpinstruction)(a2)	bne	end				// return if file is not in loaded state	cmp.w	#2,struct(JumpTableEntry.segment)(a2)	blt	end				// only segments >=2 can be unloaded	// patch segment map	sub.l	a0,a0	move.w	struct(JumpTableEntry.segment)(a2),d0	jsr	__PatchSegmentMap__	subq.l	#4,sp					// get the CODE Resource n	move.l	#'CODE',-(sp)	move.w	struct(JumpTableEntry.segment)(a2),-(sp)	_GetResource	move.l	(sp),d0	bne.s	gotres	addq.l	#4,sp	bra	endgotres:	move.l	d0,a0					// unrelocate CODE resource	move.l	(a0),a0					// dereference code resource handle	move.l	a0,a1	add.l	struct(SegmentHeader.xrefoffset)(a0),a0	jsr	__unrelocate__	// restore jumptable to unloaded state 	move.l	(sp),a0					// a0: address of segment	move.l	(a0),a0					// dereference code resource handle	move.l	a5,a1					// a1: address of first jumptable entry	add.l	struct(SegmentHeader.jtloffset)(a0),a1	move.w	struct(SegmentHeader.jtentries)(a0),d0	// d0: number of jumptable entries	move.l	a0,d1					// d1: code resource base address	bra.s	loopeloop:	move.w	#0xA9F0,struct(JumpTableEntry.jumpinstruction)(a1)	sub.l	d1,struct(JumpTableEntry.jumpaddress)(a1)	addq.l	#sizeof(struct JumpTableEntry),a1loope:	dbf	d0,loop	move.l	(sp),a0					// unlock CODE resource	_HUnlock	move.l	(sp)+,a0				// and make it purgeable	_HPurge	tst.b	__flushinstruction__	beq.s	dontflush	_FlushInstructionCachedontflush:	move.l	__segcallbacks.PostUnloadSeg,d0	beq.s	end	move.l	d0,a0	move.w	struct(JumpTableEntry.segment)(a2),-(sp)	jsr	(a0)	addq.l	#2,spend:	move.l	(sp)+,a2				// restore a2 register	move.l	(sp)+,(sp)				// pop return address	rts}/************************************************************************//* Purpose..: Dummy function called before global initialization	*//* Input....: ---							*//* Return...: ---							*//************************************************************************/extern asm void __PreInit__(void){	rts}/****************************************************************//* Purpose..: Dummy stdlib abort()				*//* Input....: ---						*//* Returns..: ---						*//****************************************************************/extern far void abort(void){	ExitToShell();}/****************************************************************//* Purpose..: Dummy stdlib exit()				*//* Input....: exit status					*//* Returns..: ---						*//****************************************************************/extern far void exit(int status){	#pragma unused(status)	__destroy_global_chain();	ExitToShell();}/****************************************************************//* Purpose..: Unpatch traps					*//* Input....: ---						*//* Returns..: ---						*//****************************************************************/extern asm void __TrapUnpatch__(void){	move.l	0x0904,a5		// CurrentA5	move.w	#_ExitToShell,D0	// restore ExitToShell	move.l	__oldExitToShell__,A0	_SetToolTrapAddress	move.w	#_LoadSeg,D0		// restore LoadSeg	move.l	__oldLoadSeg__,A0	_SetToolTrapAddress	move.w	#_UnLoadSeg,D0		// restore UnloadSeg	move.l	__oldUnloadSeg__,A0	_SetToolTrapAddress	rts}/************************************************************************//* Purpose..: Destroy all constructed global objects			*//* Input....: ---							*//* Return...: ---							*//************************************************************************/void __destroy_global_chain(void){	DestructorChain	*gdc;	while((gdc=__global_destructor_chain)!=0L)	{		__global_destructor_chain=gdc->next;		DTORCALL_COMPLETE(gdc->destructor,gdc->object);	}}/****************************************************************//* Purpose..: MUL.L d1,d0 ( unsigned or signed )		*//* Input....: operands in d0,d1					*//* Returns..: result in d0					*//****************************************************************/asm long __lmul__(long left:__D0,long right:__D1):__D0;asm long __lmul__(long left:__D0,long right:__D1):__D0{				/* d0: operand a ; d1: operand b */	machine	68020	movem.l	d2-d3,-(sp)	moveq	#2,d2		// special check for 68020+	dc.l	0x4efb2200	// jmp	2(pc,d2.w*2)s20:	bra	s21	mulu.l	d1,d0	movem.l	(sp)+,d2-d3	rtss21:	move.l	d0,d2	swap	d2	mulu.w	d1,d2		/* HiWord(a)*LoWord(b)->d2 */	move.l	d1,d3	swap	d3	mulu.w	d0,d3		/* LoWord(a)*HiWord(b)->d3 */	add.w	d3,d2		/* add the two results */	swap	d2		/* and put LoWord of result in HiWord(d2) */	clr.w	d2		/* clr LoWord(d2) */	mulu	d1,d0		/* LoWord(a)*LoWord(b)->d0 */	add.l	d2,d0		/* result:=d0+d2 */	movem.l	(sp)+,d2-d3	rts}/****************************************************************//* Purpose..: UDIV.L d1,d0					*//* Input....: operands in d0,d1					*//* Returns..: result in d0					*//****************************************************************/asm long __ldivu__(unsigned long left:__D0,unsigned long right:__D1):__D0;asm long __ldivu__(unsigned long left:__D0,unsigned long right:__D1):__D0{				/* d0: unsigned operand a ; d1: unsigned operand b */	machine	68020	movem.l	d2-d3,-(sp)	moveq	#2,d2		// special check for 68020+	dc.l	0x4efb2200	// jmp	2(pc,d2.w*2)s20:	bra	s21	divu.l	d1,d0	movem.l	(sp)+,d2-d3	rtss21:	move.l	d1,d2		/* test if HiWord(b)==0 */	clr.w	d2	swap	d2	bne.s	lldiv	move.w	d0,d3		/* long division of a/b (divu version b<0x00010000) */	clr.w	d0	swap	d0	beq.s	hizero		/* test if high word of a==0 */	divu.w	d1,d0		/* HiWord(a)/LoWord(b) */	move.w	d0,d2		/* HiWord(d0): modulo result of division */	swap	d2		/* HiWord(d2): high word div result */hizero:	move.w	d3,d0	divu.w	d1,d0		/* (modulo div result+LoWord(a))/LoWord(b) */	move.w	d0,d2	move.l	d2,d0		/* div result -> d0 */	movem.l	(sp)+,d2-d3	rtslldiv:	move.w	d0,d2		/* long division of a/b (bit version b>=0x00010000) */	clr.w	d0		/* HiWord(a) -> d0 */	swap	d0	swap	d2		/* LoWord(a) -> HiWord(d2) */	move.l	d1,d3		/* b -> d3 */	moveq	#16-1,d1dloop:	add.l	d2,d2		/* d0:d2 64 bit dividend (result is shifted into d2) */	addx.l	d0,d0	cmp.l	d3,d0	bcs.s	dloope		/* is divisor>=dividend */	sub.l	d3,d0	addq.b	#1,d2		/* shift one into result */dloope:	dbf	d1,dloop	move.l	d2,d0	movem.l	(sp)+,d2-d3	rts}/****************************************************************//* Purpose..: DIV.L d1,d0					*//* Input....: operands in d0,d1					*//* Returns..: result in d0					*//****************************************************************/asm long __ldiv__(long left:__D0,long right:__D1):__D0;asm long __ldiv__(long left:__D0,long right:__D1):__D0{				/* d0: signed operand a ; d1: signed operand b */	tst.l	d0	bge.s	apos	neg.l	d0	tst.l	d1	bge	negres	neg.l	d1	jmp	__ldivu__	/* both operands were negative (result>=0) */apos:	tst.l	d1	blt.s	bneg	jmp	__ldivu__	/* both operands were positive (result>=0) */bneg:	neg.l	d1negres:	jsr	__ldivu__	/* one operand was negative (result<=0) */	neg.l	d0	rts}/****************************************************************//* Purpose..: UMOD.L d1,d0					*//* Input....: operands in d0,d1					*//* Returns..: result in d0					*//****************************************************************/asm long __lmodu__(unsigned long left:__D0,unsigned long right:__D1):__D0;asm long __lmodu__(unsigned long left:__D0,unsigned long right:__D1):__D0{	machine	68020	movem.l	d2-d3,-(sp)	moveq	#2,d2		// special check for 68020+	dc.l	0x4efb2200	// jmp	2(pc,d2.w*2)s20:	bra	s21	divul.l	d1,d1:d0	move.l	d1,d0	movem.l	(sp)+,d2-d3	rtss21:	move.l	d1,d2		/* test if HiWord(b)==0 */	clr.w	d2	swap	d2	bne.s	lmod	move.w	d0,d3		/* long modulo of a%b (divu version b<0x00010000) */	clr.w	d0	swap	d0	beq.s	hizero		/* test if high word of a==0 */	divu.w	d1,d0		/* HiWord(a)/LoWord(b) */	move.w	d0,d2		/* HiWord(d0): modulo result of division */	swap	d2		/* HiWord(d2): high word div result */hizero:	move.w	d3,d0	divu.w	d1,d0		/* (modulodivresult+LoWord(a))/LoWord(b) */	clr.w	d0	swap	d0		/* mod result -> d0 */	movem.l	(sp)+,d2-d3	rtslmod:	move.w	d0,d2		/* long modulo of a%b (bit version b>=0x00010000) */	clr.w	d0		/* HiWord(a) -> d0 */	swap	d0	swap	d2		/* LoWord(a) -> HiWord(d2) */	move.l	d1,d3		/* b -> d3 */	moveq	#16-1,d1dloop:	add.l	d2,d2		/* d0:d2 64 bit dividend */	addx.l	d0,d0	cmp.l	d3,d0	bcs.s	dloope		/* is divisor>=dividend */	sub.l	d3,d0dloope:	dbf	d1,dloop	movem.l	(sp)+,d2-d3	rts}/****************************************************************//* Purpose..: MOD.L d1,d0					*//* Input....: operands in d0,d1					*//* Returns..: result in d0					*//****************************************************************/asm long __lmod__(long left:__D0,long right:__D1):__D0;asm long __lmod__(long left:__D0,long right:__D1):__D0{	tst.l	d1	bge.s	bpos	neg.l	d1bpos:	tst.l	d0	blt.s	aneg	jmp	__lmodu__aneg:	neg.l	d0	jsr	__lmodu__	/* one operand was negative (result<=0) */	neg.l	d0	rts}/****************************************************************//* Purpose..: Dispatch switch table (word)			*//* Input....: D0:	value of switch expression		*//* Input....: (sp):	address of switchtable			*//* Returns..: ---						*//****************************************************************/asm void __wswtch__(void);asm void __wswtch__(void){	move.l	(sp)+,a0	/* a0: address of switchtable */	move.l	a0,a1		/* a1: address of default label */	add.w	(a0)+,a1	cmp.w	(a0)+,d0	/* compare minimum */	bge.s	L0	jmp	(a1)L0:	cmp.w	(a0)+,d0	/* compare maximum */	ble.s	L1	jmp	(a1)L1:	move.w	(a0)+,d1	/* number of compares */L2:	cmp.w	(a0)+,d0	/* compare loop */	bne.s	L3	add.w	(a0),a0		/* add offset and branch */	jmp	(a0)L3:	addq.w	#2,a0	dbf	d1,L2	jmp	(a1)		/* value was not in table */}/****************************************************************//* Purpose..: Dispatch switch table (long)			*//* Input....: D0:	value of switch expression		*//* Input....: (sp):	address of switchtable			*//* Returns..: ---						*//****************************************************************/asm void __lswtch__(void);asm void __lswtch__(void){	move.l	(sp)+,a0	/* a0: address of switchtable */	move.l	a0,a1		/* a1: address of default label */	add.w	(a0)+,a1	cmp.l	(a0)+,d0	/* compare minimum */	bge.s	L0	jmp	(a1)L0:	cmp.l	(a0)+,d0	/* compare maximum */	ble.s	L1	jmp	(a1)L1:	move.w	(a0)+,d1	/* number of compares */L2:	cmp.l	(a0)+,d0	/* compare loop */	bne.s	L3	add.w	(a0),a0		/* add offset and branch */	jmp	(a0)L3:	addq.w	#2,a0	dbf	d1,L2	jmp	(a1)		/* value was not in table */}
+/************************************************************************/
+/* Project...: C++ and ANSI-C Compiler Environment			*/
+/* Name......: Startup.c						*/
+/* Purpose...: 68K application startup code example			*/
+/* Copyright.: Copyright ï¿½ 1993-1997 Metrowerks, Inc.			*/
+/************************************************************************/
+
+static char *		__relocate__(char *xref, char *segm, char *a5_base, char *code1_base);	// forward
+static char		*__decomp_data__(char *ptr,char *datasegment);	// forward
+
+/****************************************************************/
+/* Purpose..: The Startup routine for Applications		*/
+/* Input....: ---						*/
+/* Returns..: ---						*/
+/****************************************************************/
+extern asm void __Startup__(void)
+{	// this must be the first code module in this file
+functionstart:
+
+	suba.l	a6,a6			// helps for stack crawl
+
+	// clear the global data area
+
+	subq.l	#4,sp			// get CODE resource 0
+	move.l	#'CODE',-(sp)
+	clr.w	-(sp)
+	_GetResource
+	move.l	(sp),d0			// keep handle on stack for later ReleaseResource
+	beq	error
+	movea.l	d0,a0
+	movea.l	(a0),a0
+	move.l	(a0)+,d7		// d7:data bytes above DATAPTR
+	move.l	(a0),d6			// d6:data bytes below DATAPTR
+	_ReleaseResource		// release CODE resource 0
+
+	moveq	#0,d0			// clear data area below DATAPTR
+	movea.l	a5,a0
+	suba.l	d6,a0
+	bra	loop1e
+loop1:	move.b	d0,(a0)+
+loop1e:	cmpa.l	a5,a0
+	blt	loop1
+
+	lea	32+8(a5),a0		// clear data area above DATAPTR
+	lea	0(a5,d7.l),a1
+	bra	loop2e
+loop2:	move.b	d0,(a0)+
+loop2e:	cmpa.l	a1,a0
+	blt	loop2
+
+	// initialize global data area
+
+	subq.l	#4,sp			// get the DATA Resource 0
+	move.l	#'DATA',-(sp)
+	clr.w	-(sp)
+	_GetResource
+	movea.l	(sp),a0			// keep handle on stack for later ReleaseResource
+	move.l	a0,d0
+	beq	error
+//
+// DATA 0 resource layout:
+//
+// +---------------------------------+
+// | long:   offset of CODE 1 xrefs  |---+
+// +---------------------------------+   |
+// | char[]: compressed init data    |   |
+// +---------------------------------+   |
+// | char[]: compressed DATA 0 xrefs |   |
+// +---------------------------------+   |
+// | char[]: compressed CODE 1 xrefs |<--+
+// +---------------------------------+
+//
+	move.l	a5,-(sp)
+	move.l	(a0),a0			// push pointer to init data
+	pea	4(a0)
+	jsr	__decomp_data__
+	addq.l	#8,sp
+
+	// relocate data and CODE segment 1
+
+	lea	functionstart-4,a1
+	move.l	a1,__CODE1Base__	// store the base address of CODE segment 1 in CODE1Base
+
+	move.l	a5,a1		// relocate the data segment
+	jsr	__relocate__
+
+	move.l	__CODE1Base__,a1	// relocate CODE segment 1
+	jsr	__relocate__
+
+	_ReleaseResource		// release DATA resource
+
+	// initialize our A5 world checking routine
+	jsr	__A5WorldSetup__
+
+	// setup __flushinstruction__ global and flush cache
+
+	clr.b	__flushinstruction__
+	move.w	#_Unimplemented,d0
+	_GetToolTrapAddress
+	move.l	a0,-(a7)
+	move.w	#_HWPriv,d0
+	_GetOSTrapAddress
+	cmpa.l	(a7)+,a0
+	beq.s	dontflush
+	move.b	#true,__flushinstruction__
+	_FlushInstructionCache
+dontflush:
+
+	// patch LoadSeg, UnloadSeg & ExitToShell traps
+
+	move.w	#_LoadSeg,D0		// LoadSeg
+	_GetToolTrapAddress
+	move.l	A0,__oldLoadSeg__
+	move.w	#_UnLoadSeg,D0		// UnloadSeg
+	_GetToolTrapAddress
+	move.l	A0,__oldUnloadSeg__
+	move.w	#_ExitToShell,D0	// ExitToShell
+	_GetToolTrapAddress
+	move.l	A0,__oldExitToShell__
+
+	move.w	#_LoadSeg,D0		// LoadSeg
+	lea	__LoadSeg__,A0
+	_SetToolTrapAddress
+	move.w	#_UnLoadSeg,D0		// UnloadSeg
+	lea	__UnloadSeg__,A0
+	_SetToolTrapAddress
+	move.w	#_ExitToShell,D0	// ExitToShell
+	lea	__ExitToShell__,A0
+	_SetToolTrapAddress
+
+	// intitialize static C++ data objects and call main()
+
+	jsr	__PreInit__
+	jsr	__InitCode__		// data init code
+	pea	argv			// fake dummy argv
+	tst.b	__4byteints__
+	beq.s	int161
+	clr.w	-(sp)			// fake dummy argc 32-bit int
+int161:	clr.w	-(sp)			// fake dummy argc 16-bit int
+	jsr	main			// call user main
+	addq.l	#6,sp
+
+	clr.l	-(sp)
+	jsr	exit			// call exit(0)
+
+__ExitToShell__:
+	jsr	__TrapUnpatch__
+error:	_ExitToShell
+
+argv:	dc.l	0
+}
+
+/****************************************************************/
+/* Purpose..: Decompress the DATA resource			*/
+/* Input....: pointer to DATA resource data			*/
+/* Input....: pointer to A5 resource				*/
+/* Returns..: pointer to data after init data			*/
+/****************************************************************/
+
+typedef union GetData {
+	char	raw[4];
+	short	word;
+	long	lword;
+}	GetData;
+
+//
+//	Pack Patterns:
+//
+//	0x1xxx xxxx: <raw data>		x+1 (1..128)	raw data bytes
+//	0x01xx xxxx:			x+1 (1..64)		<x> 0x00 data bytes
+//	0x001x xxxx: yyyy yyyy		x+2 (2..33)		<x> <y> data bytes
+//	0x0001 xxxx:			x+1 (1..16)		<x> 0xFF data bytes
+//	0x0000 0001:			pattern: 0x00000000FFFFXXXX
+//	0x0000 0010:			pattern: 0x00000000FFXXXXXX
+//	0x0000 0011:			pattern: 0xA9F00000XXXX00XX
+//	0x0000 0100:			pattern: 0xA9F000XXXXXX00XX
+//	0x0000 0000:	end of data
+//
+
+static char *__decomp_data__(char *ptr,char *datasegment)
+{
+	GetData	ldata;
+	int	i,data;
+	char	*to,c;
+
+	for(i=0; i<3; i++)
+	{
+		ldata.raw[0]=*ptr++; ldata.raw[1]=*ptr++; ldata.raw[2]=*ptr++; ldata.raw[3]=*ptr++;
+		to=datasegment+ldata.lword;
+		while(1)
+		{
+			data=*ptr++;
+			if(data&0x80)
+			{	//	decompress (x&0x7f)+1 raw data bytes
+				data&=0x7F; do *to++=*ptr++; while(--data>=0); continue;
+			}
+			if(data&0x40)
+			{	//	decompress (x&0x3f)+1 0x00 data bytes
+//				data&=0x3F; c=0x00; goto cloop;
+				to+=(data&0x3F)+1; continue;	//	data is already initilized to 0x00
+			}
+			if(data&0x20)
+			{	//	decompress (x&0x1f)+2 repeating data bytes
+				data=(data&0x1F)+1; c=*ptr++; goto cloop;
+			}
+			if(data&0x10)
+			{	//	decompress (x&0x0f)+1 0xFF data bytes
+				data&=0x0F; c=0xFF;
+			cloop:	do *to++=c; while(--data>=0); continue;
+			}
+			switch(data)
+			{
+			case 0x00: break;
+//			case 0x01: *to++=0x00; *to++=0x00; *to++=0x00; *to++=0x00; *to++=0xFF; *to++=0xFF; *to++=*ptr++; *to++=*ptr++; continue;
+//			case 0x02: *to++=0x00; *to++=0x00; *to++=0x00; *to++=0x00; *to++=0xFF; *to++=*ptr++; *to++=*ptr++; *to++=*ptr++; continue;
+//			case 0x03: *to++=0xA9; *to++=0xF0; *to++=0x00; *to++=0x00; *to++=*ptr++; *to++=*ptr++; *to++=0x00; *to++=*ptr++; continue;
+//			case 0x04: *to++=0xA9; *to++=0xF0; *to++=0x00; *to++=*ptr++; *to++=*ptr++; *to++=*ptr++; *to++=0x00; *to++=*ptr++; continue;
+			case 0x01: to+=4; *to++=0xFF; *to++=0xFF; *to++=*ptr++; *to++=*ptr++; continue;
+			case 0x02: to+=4; *to++=0xFF; *to++=*ptr++; *to++=*ptr++; *to++=*ptr++; continue;
+			case 0x03: *to++=0xA9; *to++=0xF0; to+=2; *to++=*ptr++; *to++=*ptr++; to++; *to++=*ptr++; continue;
+			case 0x04: *to++=0xA9; *to++=0xF0; to++; *to++=*ptr++; *to++=*ptr++; *to++=*ptr++; to++; *to++=*ptr++; continue;
+			default:   SysError(dsLoadErr);
+			}
+			break;
+		}
+	}
+	return ptr;
+}
+
+/****************************************************************/
+/* Purpose..: Relocate code/data references of a segment	*/
+/* Input....: pointer to relocation data			*/
+/* Input....: pointer to segments base address			*/
+/* Input....: pointer to reloaction base address		*/
+/* Returns..: pointer to end of relocation data			*/
+/****************************************************************/
+static char *__reloc_compr__(char *ptr,char *segment,long relocbase)
+{
+	GetData	data;
+	long	offset,relocations;
+	char	c;
+
+	data.raw[0]=*ptr++; data.raw[1]=*ptr++; data.raw[2]=*ptr++; data.raw[3]=*ptr++;
+	relocations=data.lword;
+
+	for(offset=0L; relocations>0; relocations--)
+	{
+		c=*ptr++;
+		if(c&0x80)
+		{	//	8-bit signed delta
+			c<<=1; offset+=c;
+		}
+		else
+		{
+			data.raw[0]=c; data.raw[1]=*ptr++;
+			if(c&0x40)
+			{	//	15-bit unsigned delta
+
+				offset+=(short)(data.word<<2)>>1;
+			}
+			else
+			{	//	direct signed 31-bit offset
+				data.raw[2]=*ptr++; data.raw[3]=*ptr++;
+				offset=(data.lword<<2)>>1;
+			}
+		}
+		*(long *)(segment+offset)+=relocbase;
+	}
+	return ptr;
+}
+
+/****************************************************************/
+/* Purpose..: Relocate code/data references of segment		*/
+/* Input....: a0: pointer to xref data				*/
+/* Input....: a1: pointer to current segment			*/
+/* Returns..: pointer to data after xref			*/
+/****************************************************************/
+static asm char *__relocate__(char *xref:__A0,char *segm:__A1)
+{
+	move.l	a2,-(sp)
+	move.l	a1,a2			// a2: base address of relocated segment
+
+	move.l	a5,-(a7)		// relocate references to DATA segment
+	move.l	a2,-(a7)
+	move.l	a0,-(a7)
+	jsr	__reloc_compr__
+
+	move.l	__CODE1Base__,-(a7)	// relocate references to CODE segment 1
+	move.l	a2,-(a7)
+	move.l	a0,-(a7)
+	jsr	__reloc_compr__
+
+	move.l	a2,-(a7)		// relocate references to same CODE segment
+	move.l	a2,-(a7)
+	move.l	a0,-(a7)
+	jsr	__reloc_compr__
+
+	lea	3*3*4(a7),a7		// remove c function arguments
+
+	move.l	(sp)+,a2
+	rts
+}
+/****************************************************************/
+/* Purpose..: Unrelocate code/data references of segment	*/
+/* Input....: a0: pointer to xref data				*/
+/* Input....: a1: pointer to current segment			*/
+/* Returns..: pointer to data after xref			*/
+/****************************************************************/
+static asm char *__unrelocate__(char *xref:__A0,char *segm:__A1)
+{
+	move.l	a2,-(sp)
+	move.l	a1,a2			// a2: base address of relocated segment
+
+	move.l	a5,-(a7)		// relocate references to DATA segment
+	neg.l	(a7)
+	move.l	a2,-(a7)
+	move.l	a0,-(a7)
+	jsr	__reloc_compr__
+
+	move.l	__CODE1Base__,-(a7)	// relocate references to CODE segment 1
+	neg.l	(a7)
+	move.l	a2,-(a7)
+	move.l	a0,-(a7)
+	jsr	__reloc_compr__
+
+	move.l	a2,-(a7)		// relocate references to same CODE segment
+	neg.l	(a7)
+	move.l	a2,-(a7)
+	move.l	a0,-(a7)
+	jsr	__reloc_compr__
+
+	lea	3*3*4(a7),a7		// remove c function arguments
+
+	move.l	(sp)+,a2
+	rts
+}
+
+/****************************************************************/
+/* Purpose..: Check if this is the correct A5 world		*/
+/* Input....: true: _LoadSeg; false: _UnloadSeg			*/
+/* Returns..: ---						*/
+/****************************************************************/
+static asm void __A5WorldCheck__(short is_loadseg)
+{
+	cmp.l	our_a5,A5
+	bne.s	other_a5_world
+	rts
+
+other_a5_world:				// this is not our A5 world (use original trap routines)
+	movem.l	a0/a5,-(sp)		// save used registers
+//
+// Stack layout at this point:
+// 0:	dc.l	saved A5
+// 4:	dc.l	saved A0
+// 8:	dc.l	return address (no longer needed)
+// 12:	dc.w	is_loadseg
+// 14:	_LoadSeg/_UnloadSeg arguments ...
+//
+	move.l	our_a5,a5		// setup our a5 so we can use globals
+	move.l	__oldLoadSeg__,a0	// load original _LoadSeg/_UnloadSeg address into a0
+	tst.w	12(sp)
+	bne.s	ldseg
+	move.l	__oldUnloadSeg__,a0
+ldseg:	move.l	a0,10(sp)		// store return address (destroys argument)
+	movem.l	(sp)+,a0/a5		// restore used registers
+	addq.w	#2,sp			// adjust stack pointer
+	rts				// jump to original _LoadSeg/_UnloadSeg
+
+our_a5:	dc.l	0			// memory location used to store our A5
+	entry	__A5WorldSetup__
+	lea	our_a5,a0
+	move.l	a5,(a0)
+	rts
+}
+
+/****************************************************************/
+/* Purpose..: FIxup Segment address				*/
+/* Input....: new segment address (in A0)			*/
+/* Input....: segment number (in D0)				*/
+/* Returns..: ---						*/
+/****************************************************************/
+static asm void __PatchSegmentMap__(void *segaddr:__A0,short segn:__D0)
+{
+	lea	SEGMAPNAME,a1
+	mulu.w	#sizeof(segment_map),d0
+	move.l	a0,struct(segment_map.codeptr)-sizeof(segment_map)(a1,d0.L)
+	rts
+}
+
+/****************************************************************/
+/* Purpose..: Load a segment into memory and relocate it	*/
+/* Input....: (sp) has the address of jumptable entry		*/
+/* Returns..: does not return directly				*/
+/****************************************************************/
+extern asm pascal void __LoadSeg__(void)
+{
+	move.w	#1,-(sp)
+	jsr	__A5WorldCheck__
+	addq.w	#2,sp
+
+	movem.l	d0-d2/a0-a2,-(sp)		// save registers
+	subq.l	#2,24(sp)			// adjust return address
+	movea.l	24(sp),a2			// a2: base address of jumptable entry
+
+	move.l	__segcallbacks.PreLoadSeg,d0
+	beq.s	nopreload
+	move.l	d0,a0
+	move.w	struct(JumpTableEntry.segment)(a2),-(sp)
+	jsr	(a0)
+	addq.l	#2,sp
+nopreload:
+	st	0x0A5E				// ResLoad
+	subq.l	#4,sp				// get the CODE Resource n
+retryload:
+	move.l	#'CODE',-(sp)
+	move.w	struct(JumpTableEntry.segment)(a2),-(sp)
+	_GetResource
+	move.l	(sp),d0
+	bne.s	noerr
+	move.l	__segcallbacks.LoadSegErr,d0
+	bne.s	loaderrcallback
+	moveq	#dsLoadErr,d0
+	_SysError
+loaderrcallback:
+	move.l	d0,a0
+	move.w	struct(JumpTableEntry.segment)(a2),-(sp)
+	jsr	(a0)
+	addq.l	#2,sp
+	bra	retryload
+
+noerr:	tst.b	0x0BB2					// SegHiEnable
+	beq.s	nohi
+	move.l	d0,a0					// move the code resource to high memory
+	_MoveHHi
+nohi:	move.l	(sp),a0					// lock code resource
+	_HLock
+
+	move.l	(sp)+,a0				// get the stripped address of code segment
+	movea.l	(a0),a0
+	move.l	a0,d0
+	_StripAddress
+	move.l	d0,a0
+	move.l	a0,-(sp)				// save address
+
+	// patch segment map
+
+	move.w	struct(JumpTableEntry.segment)(a2),d0
+	jsr	__PatchSegmentMap__
+
+	// relocate segment
+
+	move.l	a0,a1
+	add.l	struct(SegmentHeader.xrefoffset)(a0),a0
+	jsr	__relocate__				// relocate the new segment
+
+	// set jumptable to loaded state
+
+	movea.l	(sp)+,a0				// a0: address of segment
+	movea.l	a5,a1					// a1: address of first jumptable entry
+	add.l	struct(SegmentHeader.jtloffset)(a0),a1
+	move.w	struct(SegmentHeader.jtentries)(a0),d0	// d0: number of jumptable entries
+	move.l	a0,d1					// d1: code resource base address
+	bra.s	loope
+loop:	move.w	#0x4EF9,struct(JumpTableEntry.jumpinstruction)(a1)
+	add.l	d1,struct(JumpTableEntry.jumpaddress)(a1)
+	addq.l	#sizeof(struct JumpTableEntry),a1
+loope:	dbf	d0,loop
+
+	tst.b	__flushinstruction__
+	beq.s	dontflush
+	_FlushInstructionCache
+dontflush:
+	move.l	__segcallbacks.PostLoadSeg,d0
+	beq.s	nopostload
+	move.l	d0,a0
+	move.w	struct(JumpTableEntry.segment)(a2),-(sp)
+	jsr	(a0)
+	addq.l	#2,sp
+
+nopostload:
+	movem.l	(sp)+,d0-d2/a0-a2		// restore registers
+
+	tst.b	0x012D				// LoadTrap: true: call debugger when LoadSeg is called
+	beq.s	notrap
+	_Debugger
+notrap:	rts					// return to new address
+}
