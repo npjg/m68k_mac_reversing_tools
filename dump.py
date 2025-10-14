@@ -2,6 +2,8 @@ import struct
 import machfs
 import macresources
 import collections
+import argparse
+import sys
 
 # make custom jank dump of code
 
@@ -243,6 +245,14 @@ def dump_file(image_filename, path, out_filename):
     open(out_filename, "wb").write(dump)
 
 
-# dump_file('HeavenEarth13Color.toast', ['Heaven & Earth'], 'dump_heavenandearth')
-# dump_file('disk2.dsk', ["System's Twilight"], 'dump_systemstwilight')
-dump_file("/Users/nathanaelgentry/Virtual Machines.localized/Mac OS 8.1 - Dev.sheepvm/Mac OS 8.6.dsk", ["Streams 68K"], "dump_streams68k")
+def main():
+    parser = argparse.ArgumentParser(description='Dump M68K Mac executable resources from disk images for loading into Ghidra')
+    parser.add_argument('image_file', help='Filepath of the HFS disk image')
+    parser.add_argument('path', help='Path to file within HFS disk image')
+    parser.add_argument('-o', help='Output filename for the dump')
+
+    args = parser.parse_args()
+    dump_file(args.image_file, args.path, args.output)
+
+if __name__ == "__main__":
+    main()
