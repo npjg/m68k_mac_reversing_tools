@@ -119,82 +119,88 @@ public class M68kMacSyscallScript extends GhidraScript {
             callee.setCallingConvention(callingConvention);
 
             try {
-                ArrayList<ParameterImpl> params = new ArrayList();
-                if (syscallData != null && syscallData.length >= 2) {
-                    callee.setCustomVariableStorage(true);
-                    String callingConvention = syscallData[1];
-                    if (callingConvention.equals("custom")) {
-                        for (int i = 2; i < syscallData.length; i++) {
-                            String s = syscallData[i];
-                            if (s.equals("noreturn")) {
-                                callee.setNoReturn(true);
-                            } else if (s.startsWith("purge")) {
-                                int purgeSize = Integer.decode(s.substring(5).trim());
-                                callee.setStackPurgeSize(purgeSize);
-                            } else if (i == 2) { // return type
-                                if (s.equals("void")) {
-                                    callee.setReturn(DataType.VOID, VariableStorage.VOID_STORAGE, SourceType.USER_DEFINED);
-                                } else {
-                                    String[] returnData = s.split("@");
-                                    DataType returnType = parseType(dtm, returnData[0].trim());
-                                    VariableStorage returnStorage = parseStorage(currentProgram, returnData[1].trim());
-                                    callee.setReturn(returnType, returnStorage, SourceType.USER_DEFINED);
-                                }
-                            } else {
-                                String paramName = s.substring(s.indexOf(" "), s.indexOf("@")).trim();
-                                DataType paramType = parseType(dtm, s.substring(0, s.indexOf(" ")));
-                                VariableStorage paramStorage = parseStorage(currentProgram, s.substring(s.indexOf("@")+1).trim());
-                                params.add(new ParameterImpl(paramName, paramType, paramStorage, currentProgram));
-                            }
-                        }
-                    } else if (callingConvention.equals("pascal")) {
-                        int purgeSize = 0;
-                        // skip return type
-                        for (int i = 3; i < syscallData.length; i++) {
-                            String s = syscallData[i];
-                            if (s.equals("noreturn")) {
-                                continue;
-                            } else {
-                                purgeSize += parseType(dtm, s.substring(0, s.indexOf(" "))).getLength();
-                            }
-                        }
-                        callee.setStackPurgeSize(purgeSize);
-                        int stackPtr = purgeSize;
-                        for (int i = 2; i < syscallData.length; i++) {
-                            String s = syscallData[i];
-                            if (s.equals("noreturn")) {
-                                callee.setNoReturn(true);
-                            } else if (i == 2) { // return type
-                                if (s.equals("void")) {
-                                    callee.setReturn(DataType.VOID, VariableStorage.VOID_STORAGE, SourceType.USER_DEFINED);
-                                } else {
-                                    DataType returnType = parseType(dtm, s);
-                                    int size = returnType.getLength();
-                                    VariableStorage returnStorage = new VariableStorage(currentProgram, purgeSize, size);
-                                    callee.setReturn(returnType, returnStorage, SourceType.USER_DEFINED);
-                                }
-                            } else {
-                                String paramName = s.substring(s.indexOf(" ")).trim();
-                                DataType paramType = parseType(dtm, s.substring(0, s.indexOf(" ")));
-                                int size = paramType.getLength();
-                                VariableStorage paramStorage = new VariableStorage(currentProgram, stackPtr - size, size);
-                                stackPtr -= size;
-                                params.add(new ParameterImpl(paramName, paramType, paramStorage, currentProgram));
-                            }
-                        }
-                    } else {
-                        popup("Invalid calling convention "+callingConvention);
-                    }
-                }
-                callee.replaceParameters(params, FunctionUpdateType.CUSTOM_STORAGE, true, SourceType.USER_DEFINED);
+                processSyscallParamsAndReturnType(callee, syscallData, dtm, syscallName);
             } catch (InvalidInputException e) {
-                popup("Failed to parse syscall data for "+syscallName);
+                popup("Failed to parse syscall data for " + syscallName);
             }
             Reference ref = currentProgram.getReferenceManager().addMemoryReference(callSite,
                 callTarget, RefType.CALLOTHER_OVERRIDE_CALL, SourceType.USER_DEFINED, Reference.MNEMONIC);
             //overriding references must be primary to be active
             currentProgram.getReferenceManager().setPrimary(ref, true);
         }
+    }
+
+    private void processSyscallParamsAndReturnType(Function callee, String[] syscallData, DataTypeManager dtm, String syscallName) throws InvalidInputException {
+        ArrayList<ParameterImpl> params = new ArrayList<>();
+        if (syscallData != null && syscallData.length >= 2) {
+            callee.setCustomVariableStorage(true);
+            String callingConvention = syscallData[1];
+
+            if (callingConvention.equals("custom")) {
+                for (int i = 2; i < syscallData.length; i++) {
+                    // Read the custom calling convention parameters.
+                    String s = syscallData[i];
+                    if (s.equals("noreturn")) {
+                        callee.setNoReturn(true);
+                    } else if (s.startsWith("purge")) {
+                        int purgeSize = Integer.decode(s.substring(5).trim());
+                        callee.setStackPurgeSize(purgeSize);
+                    } else if (i == 2) { // return type
+                        if (s.equals("void")) {
+                            callee.setReturn(DataType.VOID, VariableStorage.VOID_STORAGE, SourceType.USER_DEFINED);
+                        } else {
+                            String[] returnData = s.split("@");
+                            DataType returnType = parseType(dtm, returnData[0].trim());
+                            VariableStorage returnStorage = parseStorage(currentProgram, returnData[1].trim());
+                            callee.setReturn(returnType, returnStorage, SourceType.USER_DEFINED);
+                        }
+                    } else {
+                        String paramName = s.substring(s.indexOf(" "), s.indexOf("@")).trim();
+                        DataType paramType = parseType(dtm, s.substring(0, s.indexOf(" ")));
+                        VariableStorage paramStorage = parseStorage(currentProgram, s.substring(s.indexOf("@")+1).trim());
+                        params.add(new ParameterImpl(paramName, paramType, paramStorage, currentProgram));
+                    }
+                }
+            } else if (callingConvention.equals("pascal")) {
+                int purgeSize = 0;
+                // skip return type
+                for (int i = 3; i < syscallData.length; i++) {
+                    String s = syscallData[i];
+                    if (s.equals("noreturn")) {
+                        continue;
+                    } else {
+                        purgeSize += parseType(dtm, s.substring(0, s.indexOf(" "))).getLength();
+                    }
+                }
+                callee.setStackPurgeSize(purgeSize);
+                int stackPtr = purgeSize;
+                for (int i = 2; i < syscallData.length; i++) {
+                    String s = syscallData[i];
+                    if (s.equals("noreturn")) {
+                        callee.setNoReturn(true);
+                    } else if (i == 2) { // return type
+                        if (s.equals("void")) {
+                            callee.setReturn(DataType.VOID, VariableStorage.VOID_STORAGE, SourceType.USER_DEFINED);
+                        } else {
+                            DataType returnType = parseType(dtm, s);
+                            int size = returnType.getLength();
+                            VariableStorage returnStorage = new VariableStorage(currentProgram, purgeSize, size);
+                            callee.setReturn(returnType, returnStorage, SourceType.USER_DEFINED);
+                        }
+                    } else {
+                        String paramName = s.substring(s.indexOf(" ")).trim();
+                        DataType paramType = parseType(dtm, s.substring(0, s.indexOf(" ")));
+                        int size = paramType.getLength();
+                        VariableStorage paramStorage = new VariableStorage(currentProgram, stackPtr - size, size);
+                        stackPtr -= size;
+                        params.add(new ParameterImpl(paramName, paramType, paramStorage, currentProgram));
+                    }
+                }
+            } else {
+                popup("Invalid calling convention " + callingConvention);
+            }
+        }
+        callee.replaceParameters(params, FunctionUpdateType.CUSTOM_STORAGE, true, SourceType.USER_DEFINED);
     }
 
     private DataType parseType(DataTypeManager dtm, String s) {
