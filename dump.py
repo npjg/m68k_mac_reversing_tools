@@ -67,7 +67,6 @@ def dump_file(image_filename, path, out_filename):
     crels = rsrcs[b"CREL"]
 
     jumptable = codes[0]
-
     above_a5_size = u32(jumptable[:4])
     below_a5_size = u32(jumptable[4:8])
     jump_table_size = u32(jumptable[8:12])
@@ -83,6 +82,7 @@ def dump_file(image_filename, path, out_filename):
     if b"STRS" in rsrcs:
         a5 += len(rsrcs[b"STRS"][0])
 
+    # CREATE THE HEADER.
     dump = b""
     header = (
         b"J\xffA\xffN\xffK\xff"  # put garbage so address 0 isn't recognized as a string
@@ -92,10 +92,14 @@ def dump_file(image_filename, path, out_filename):
     # rts
     header += b"\x2a\x7c" + p32(a5) + b"\x4e\x75"
 
+    # CREATE SYSTEM RAM.
+    # The header goes at the very start of system RAM.
+    # TODO: Can we write the header any better? Maybe by changing the system RAM in-place?
     system_ram = bytearray(header + bytes(SYSTEM_RAM_SIZE - len(header)))
     system_ram[0x904:0x908] = p32(a5)
     dump += system_ram
 
+    # TODO: Figure out where the STRS resources come from.
     if b"STRS" in rsrcs:
         strs_base = len(dump)
         dump += rsrcs[b"STRS"][0]
@@ -148,6 +152,7 @@ def dump_file(image_filename, path, out_filename):
     a5_world = b"\x00" * 32  # TODO pointer to quickdraw global vars
     for i in range(0x10, len(jumptable), 8):
         # construct a5 jumptable (all loaded jumptable entries)
+        # See Inside Macintosh II-61 (The Segment Loader).
         entry = jumptable[i : i + 8]
         if entry[2:4] == b"\x3f\x3c":
             """
@@ -188,6 +193,8 @@ def dump_file(image_filename, path, out_filename):
 
     below_a5_data = bytes(below_a5_size)
 
+    # TODO: What actually is the ZERO resource? It seems to be peculiar to
+    # some individual compiler, as CodeWarrior doesn't have it.
     if b"ZERO" in rsrcs and b"DATA" in rsrcs:
         data_rsrc = bytes(rsrcs[b"DATA"][0])
         zero_rsrc = bytes(rsrcs[b"ZERO"][0])
@@ -203,6 +210,7 @@ def dump_file(image_filename, path, out_filename):
                 if u16(data_rsrc[i : i + 2]) == 0:
                     below_a5_data += bytes(u16(zero_rsrc[zero_index : zero_index + 2]))
                     zero_index += 2
+
             # TODO refactor
             drel_rsrc = bytes(rsrcs[b"DREL"][0])
             i = 0
@@ -237,4 +245,4 @@ def dump_file(image_filename, path, out_filename):
 
 # dump_file('HeavenEarth13Color.toast', ['Heaven & Earth'], 'dump_heavenandearth')
 # dump_file('disk2.dsk', ["System's Twilight"], 'dump_systemstwilight')
-dump_file("testfile.bin", ["Kid Pix"], "dump_kidpix")
+dump_file("/Users/nathanaelgentry/Virtual Machines.localized/Mac OS 8.1 - Dev.sheepvm/Mac OS 8.6.dsk", ["Streams 68K"], "dump_streams68k")
