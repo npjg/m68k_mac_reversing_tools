@@ -89,25 +89,35 @@ public class M68kMacSyscallScript extends GhidraScript {
         DataTypeManager dtm = BuiltInDataTypeManager.getDataTypeManager();
 
         for (Entry<Address, Long> entry : addressesToSyscalls.entrySet()) {
+            // Get the context surrounding the syscall.
             Address callSite = entry.getKey();
             Long offset = entry.getValue();
             Address callTarget = syscallSpace.getAddress(offset);
             Function callee = currentProgram.getFunctionManager().getFunctionAt(callTarget);
+
+            // Get the syscall's name.
             String syscallName = "syscall_"+String.format("%08X", offset);
             String[] syscallData = null;
             if (syscallNumberToData.get(offset) != null) {
                 syscallData = syscallNumberToData.get(offset).split(",");
             }
+            // Here, we are splitting into fields based on the comma-separated format
+            // of the data file:
+            //  0xa85e, _BitSet, pascal, void, pointer bytePtr, dword bitNum
             if (syscallData != null) {
                 for (int i = 0; i < syscallData.length; i++) {
                     syscallData[i] = syscallData[i].trim();
                 }
                 syscallName = syscallData[0];
             }
+
+            // Create the placeholder syscall function in the syscall space,
+            // and set the calling convention appropriately.
             if (callee == null) {
                 callee = createFunction(callTarget, syscallName);
             }
             callee.setCallingConvention(callingConvention);
+
             try {
                 ArrayList<ParameterImpl> params = new ArrayList();
                 if (syscallData != null && syscallData.length >= 2) {
