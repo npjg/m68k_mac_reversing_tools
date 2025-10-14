@@ -1,92 +1,122 @@
 # selector number, name, comment, # of operands
 # from "68000 SANE Engine" in "Lisa Pascal 3.0 Systems Software"
-# TODO: return, param types
-0x0000, FADDX, add extended, 2
-0x0800, FADDD, add double, 2
-0x1000, FADDS, add single, 2
-0x3000, FADDC, add comp, 2
-0x2000, FADDI, add int, 2
-0x2800, FADDL, add long, 2
-0x0002, FSUBX, sub extended, 2
-0x0802, FSUBD, sub double, 2
-0x1002, FSUBS, sub single, 2
-0x3002, FSUBC, sub comp, 2
-0x2002, FSUBI, sub int, 2
-0x2802, FSUBL, sub long, 2
-0x0004, FMULX, mul extended, 2
-0x0804, FMULD, mul double, 2
-0x1004, FMULS, mul single, 2
-0x3004, FMULC, mul comp, 2
-0x2004, FMULI, mul int, 2
-0x2804, FMULL, mul long, 2
-0x0006, FDIVX, div extended, 2
-0x0806, FDIVD, div double, 2
-0x1006, FDIVS, div single, 2
-0x3006, FDIVC, div comp, 2
-0x2006, FDIVI, div int, 2
-0x2806, FDIVL, div long, 2
-0x0012, FSQRTX, sqrt extended, 1
-0x0014, FRINTX, round extended to int, 1
-0x0016, FTINTX, trunc extended to int, 1
+#
+# All params are pushed left-to-right by address:
+#  SRC2 (if any), SRC, DST2 (if any), DST
+# Return values are NOT pushed on the stack - all are void.
+
+# X Extended (80 bits, pass ed by address)
+# D Double (64 bits, passed by address)
+# S Single (32 bits, passed by address)
+# B Byte (8 bits, passed by address)
+# I Integer (16 bits, passed by address)
+# L Long integer (32 bits, pas sed by address)
+# C Comp (64 bits, passed by add ress)
+# Dec Decimal record (25 bytes, passed by add ress)
+# DecForm Decform record (4 bytes, passed by address)
+# DecStr Pascal or C decimal string
+
+# FADD*: DST = DST + SRC
+# TODO: Add proper pointer types.
+0x0000, FADDX, add extended, pointer src, pointer dest, word opword
+0x0800, FADDD, add double, pointer src, pointer dest, word opword
+0x1000, FADDS, add single, pointer src, pointer dest, word opword
+0x3000, FADDC, add comp, pointer src, pointer dest, word opword
+0x2000, FADDI, add int, pointer src, pointer dest, word opword
+0x2800, FADDL, add long, pointer src, pointer dest, word opword
+
+# FSUB*: DST = DST - SRC
+0x0002, FSUBX, sub extended, pointer src, pointer dest, word opword
+0x0802, FSUBD, sub double, pointer src, pointer dest, word opword
+0x1002, FSUBS, sub single, pointer src, pointer dest, word opword
+0x3002, FSUBC, sub comp, pointer src, pointer dest, word opword
+0x2002, FSUBI, sub int, pointer src, pointer dest, word opword
+0x2802, FSUBL, sub long, pointer src, pointer dest, word opword
+
+# FMUL*: DST = DST * SRC
+0x0004, FMULX, mul extended, pointer src, pointer dest, word opword
+0x0804, FMULD, mul double, pointer src, pointer dest, word opword
+0x1004, FMULS, mul single, pointer src, pointer dest, word opword
+0x3004, FMULC, mul comp, pointer src, pointer dest, word opword
+0x2004, FMULI, mul int, pointer src, pointer dest, word opword
+0x2804, FMULL, mul long, pointer src, pointer dest, word opword
+
+0x0006, FDIVX, div extended, pointer src, pointer dest, word opword
+0x0806, FDIVD, div double, pointer src, pointer dest, word opword
+0x1006, FDIVS, div single, pointer src, pointer dest, word opword
+0x3006, FDIVC, div comp, pointer src, pointer dest, word opword
+0x2006, FDIVI, div int, pointer src, pointer dest, word opword
+0x2806, FDIVL, div long, pointer src, pointer dest, word opword
+
+0x0012, FSQRTX, sqrt extended, pointer dest, word opword
+0x0014, FRINTX, round extended to int, pointer dest, word opword
+0x0016, FTINTX, trunc extended to int, pointer dest, word opword
+
 # TODO: rem stores quotient in d0
-0x000c, FREMX, rem extended, 2
-0x080c, FREMD, rem double, 2
-0x100c, FREMS, rem single, 2
-0x300c, FREMC, rem comp, 2
-0x200c, FREMI, rem int, 2
-0x280c, FREML, rem long, 2
-0x001a, FLOGBX, log binary extended, 1
-0x0018, FSCALBX, scale binary extended, 2
-0x000d, FNEGX, negate extended, 1
-0x000f, FABSX, abs extended, 1
-0x0011, FCPYSGNX, copy-sign extended, 2
-0x0013, FNEXTX, next-after extended, 2
-0x0813, FNEXTD, next-after double, 2
-0x1013, FNEXTS, next-after single, 2
-0x0010, FX2X, extended to extended, 2
-0x0810, FX2D, extended to double, 2
-0x1010, FX2S, extended to single, 2
-0x3010, FX2C, extended to comp, 2
-0x2010, FX2I, extended to int, 2
-0x2810, FX2L, extended to long, 2
-0x080e, FD2X, double to extended, 2
-0x100e, FS2X, single to extended, 2
-0x300e, FC2X, comp to extended, 2
-0x200e, FI2X, int to extended, 2
-0x280e, FL2X, long to extended, 2
-0x000b, FX2DEC, extended to decimal, 3
-0x080b, FD2DEC, double to decimal, 3
-0x100b, FS2DEC, single to decimal, 3
-0x300b, FC2DEC, comp to decimal, 3
-0x200b, FI2DEC, int to decimal, 3
-0x280b, FL2DEC, long to decimal, 3
-0x0009, FDEC2X, decimal to extended, 2
-0x0809, FDEC2D, decimal to double, 2
-0x1009, FDEC2S, decimal to single, 2
-0x3009, FDEC2C, decimal to comp, 2
-0x2009, FDEC2I, decimal to int, 2
-0x2809, FDEC2L, decimal to long, 2
+0x000c, FREMX, rem extended, pointer src, pointer dest, word opword
+0x080c, FREMD, rem double, pointer src, pointer dest, word opword
+0x100c, FREMS, rem single, pointer src, pointer dest, word opword
+0x300c, FREMC, rem comp, pointer src, pointer dest, word opword
+0x200c, FREMI, rem int, pointer src, pointer dest, word opword
+0x280c, FREML, rem long, pointer src, pointer dest, word opword
+
+0x001a, FLOGBX, log binary extended, pointer src, pointer dest, word opword
+0x0018, FSCALBX, scale binary extended, pointer src, pointer dest, word opword
+0x000d, FNEGX, negate extended, pointer dest, word opword
+0x000f, FABSX, abs extended, pointer dest, word opword
+0x0011, FCPYSGNX, copy-sign extended, pointer src, pointer dest, word opword
+0x0013, FNEXTX, next-after extended, pointer src, pointer dest, word opword
+0x0813, FNEXTD, next-after double, pointer src, pointer dest, word opword
+0x1013, FNEXTS, next-after single, pointer src, pointer dest, word opword
+
+0x0010, FX2X, extended to extended, pointer src, pointer dest, word opword
+0x0810, FX2D, extended to double, pointer src, pointer dest, word opword
+0x1010, FX2S, extended to single, pointer src, pointer dest, word opword
+0x3010, FX2C, extended to comp, pointer src, pointer dest, word opword
+0x2010, FX2I, extended to int, pointer src, pointer dest, word opword
+0x2810, FX2L, extended to long, pointer src, pointer dest, word opword
+0x080e, FD2X, double to extended, pointer src, pointer dest, word opword
+0x100e, FS2X, single to extended, pointer src, pointer dest, word opword
+0x300e, FC2X, comp to extended, pointer src, pointer dest, word opword
+0x200e, FI2X, int to extended, pointer src, pointer dest, word opword
+0x280e, FL2X, long to extended, pointer src, pointer dest, word opword
+
+0x000b, FX2DEC, extended to decimal, pointer src2, pointer src, pointer dest, word opword
+0x080b, FD2DEC, double to decimal, pointer src2, pointer src, pointer dest, word opword
+0x100b, FS2DEC, single to decimal, pointer src2, pointer src, pointer dest, word opword
+0x300b, FC2DEC, comp to decimal, pointer src2, pointer src, pointer dest, word opword
+0x200b, FI2DEC, int to decimal, pointer src2, pointer src, pointer dest, word opword
+0x280b, FL2DEC, long to decimal, pointer src2, pointer src, pointer dest, word opword
+
+0x0009, FDEC2X, decimal to extended, pointer src, pointer dest, word opword
+0x0809, FDEC2D, decimal to double, pointer src, pointer dest, word opword
+0x1009, FDEC2S, decimal to single, pointer src, pointer dest, word opword
+0x3009, FDEC2C, decimal to comp, pointer src, pointer dest, word opword
+0x2009, FDEC2I, decimal to int, pointer src, pointer dest, word opword
+0x2809, FDEC2L, decimal to long, pointer src, pointer dest, word opword
+
 # TODO: compare sets flags
-0x0008, FCMPX, compare extended (no invalid for unordered), 2
-0x0808, FCMPD, compare double (no invalid for unordered), 2
-0x1008, FCMPS, compare single (no invalid for unordered), 2
-0x3008, FCMPC, compare comp (no invalid for unordered), 2
-0x2008, FCMPI, compare int (no invalid for unordered), 2
-0x2808, FCMPL, compare long (no invalid for unordered), 2
-0x000a, FCPXX, compare extended (signal invalid if unordered), 2
-0x080a, FCPXD, compare double (signal invalid if unordered), 2
-0x100a, FCPXS, compare single (signal invalid if unordered), 2
-0x300a, FCPXC, compare comp (signal invalid if unordered), 2
-0x200a, FCPXI, compare int (signal invalid if unordered), 2
-0x280a, FCPXL, compare long (signal invalid if unordered), 2
-0x001c, FCLASSX, classify extended, 2
-0x081c, FCLASSD, classify double, 2
-0x101c, FCLASSS, classify single, 2
-0x0003, FGETENV, get environment, 1
-0x0001, FSETENV, set environment, 1
-0x001b, FTESTXCP, test exception, 1
-0x0015, FSETXCP, set exception, 1
-0x0017, FPROCENTRY, procedure entry, 1
-0x0019, FPROCEXIT, procedure exit, 1
-0x0005, FSETHV, set halt vector, 1
-0x0007, FGETHV, get halt vector, 1
+0x0008, FCMPX, compare extended (no invalid for unordered), pointer src, pointer dest, word opword
+0x0808, FCMPD, compare double (no invalid for unordered), pointer src, pointer dest, word opword
+0x1008, FCMPS, compare single (no invalid for unordered), pointer src, pointer dest, word opword
+0x3008, FCMPC, compare comp (no invalid for unordered), pointer src, pointer dest, word opword
+0x2008, FCMPI, compare int (no invalid for unordered), pointer src, pointer dest, word opword
+0x2808, FCMPL, compare long (no invalid for unordered), pointer src, pointer dest, word opword
+0x000a, FCPXX, compare extended (signal invalid if unordered), pointer src, pointer dest, word opword
+0x080a, FCPXD, compare double (signal invalid if unordered), pointer src, pointer dest, word opword
+0x100a, FCPXS, compare single (signal invalid if unordered), pointer src, pointer dest, word opword
+0x300a, FCPXC, compare comp (signal invalid if unordered), pointer src, pointer dest, word opword
+0x200a, FCPXI, compare int (signal invalid if unordered), pointer src, pointer dest, word opword
+0x280a, FCPXL, compare long (signal invalid if unordered), pointer src, pointer dest, word opword
+
+0x001c, FCLASSX, classify extended, pointer src, pointer dest, word opword
+0x081c, FCLASSD, classify double, pointer src, pointer dest, word opword
+0x101c, FCLASSS, classify single, pointer src, pointer dest, word opword
+0x0003, FGETENV, get environment, pointer dest, word opword
+0x0001, FSETENV, set environment, pointer src, word opword
+0x001b, FTESTXCP, test exception, pointer dest, word opword
+0x0015, FSETXCP, set exception, ponter src, word opword
+0x0017, FPROCENTRY, procedure entry, pointer dest, word opword
+0x0019, FPROCEXIT, procedure exit, pointer src, word opword
+0x0005, FSETHV, set halt vector, pointer src, word opword
+0x0007, FGETHV, get halt vector, pointer dest, word opword

@@ -24,6 +24,7 @@
 6. Run `M68kMacJankLoader.java` (find functions from jumptable), `M68kMacSymbols.java` (find symbols), `M68kMacPropagateThunks.java` (propagate thunk calls), and `M68kMacSyscallScript.java` (markup syscalls) in that order.
 
 ## TODO
-* `_FP68K` (and `_*Dispatch`, `_Pack*`, etc.) routine number labelling
+* Finish creating properly typed functions for `_FP68K` routines
+* Create properly typed functions for `_*Dispatch`, `_Pack*` routines
 * Finish all syscalls
 * Direct loader for Ghidra from binhex/derez
