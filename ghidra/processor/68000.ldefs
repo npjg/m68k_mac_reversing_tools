@@ -70,6 +70,6 @@
             manualindexfile="../manuals/68000.idx"
             id="68000:BE:32:mac">
     <description>Motorola 32-bit 68000 (Mac)</description>
-    <compiler name="default" spec="68000.cspec" id="default"/>
+    <compiler name="default" spec="68000-mac.cspec" id="default"/>
   </language>
 </language_definitions>
