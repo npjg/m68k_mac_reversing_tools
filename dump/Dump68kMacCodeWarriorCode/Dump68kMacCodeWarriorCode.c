@@ -62,7 +62,7 @@ int main(int argc, char* argv[])
     // Parse command line arguments
     if (argc < 4) {
         printf("Usage: %s <CODE_0_file> <DATA_0_file> <CODE_1_file> [output_dump_file]\n", argv[0]);
-        printf("  Creates a memory dump of the A5 world for static analysis\n");
+        printf("  Dumps a 68k Mac application compiled with CodeWarrior for importing into Ghidra. Handles the custom CodeWarrior A5 world/relocation information encoding.\n");
         return 1;
     }
 
