@@ -9,37 +9,119 @@
 #include <stdlib.h>
 #include <string.h>
 
-void* __Startup__(char *data0_resource, char *code1_resource, unsigned long code1_size);
+void* __Startup__(char *data0_resource, char *code1_resource, unsigned long code1_size, unsigned long above_a5_size, unsigned long below_a5_size);
 static char *		__relocate__(char *xref, char *segm, unsigned long a5_base, unsigned long code1_base);	// forward
 static char		*__decomp_data__(char *ptr,char *datasegment);	// forward
 
-const long data_bytes_above_a5 = 0x15878;
-const long data_bytes_below_a5 = 0x20B0;
 const long code_resource_offset = 0x60000;
 
+/****************************************************************/
+/* Purpose..: Decompress the DATA resource			*/
+/* Input....: pointer to DATA resource data			*/
+/* Input....: pointer to A5 resource				*/
+/* Returns..: pointer to data after init data			*/
+/****************************************************************/
+
+// Helper functions to read and write big-endian integers
+static inline unsigned long read_be32(const char* ptr) {
+	return ((unsigned char)ptr[0] << 24) |
+	       ((unsigned char)ptr[1] << 16) |
+	       ((unsigned char)ptr[2] << 8) |
+	       ((unsigned char)ptr[3]);
+}
+
+static inline unsigned short read_be16(const char* ptr) {
+	return ((unsigned char)ptr[0] << 8) |
+	       ((unsigned char)ptr[1]);
+}
+
+static inline void write_be32(char* ptr, unsigned long value) {
+	ptr[0] = (value >> 24) & 0xFF;
+	ptr[1] = (value >> 16) & 0xFF;
+	ptr[2] = (value >> 8) & 0xFF;
+	ptr[3] = value & 0xFF;
+}
+
+// TODO: Add some way to detect if this actually IS a CodeWarrior compiled program so we don't write
+// a junk dump.
 int main(int argc, char* argv[])
 {
     char* data0_resource = NULL;
+    char* code0_resource = NULL;
     char* code1_resource = NULL;
     void* a5_world_base = NULL;
     FILE* file = NULL;
     unsigned long file_size;
     unsigned long code1_size = 0;
+    unsigned long above_a5_size = 0;
+    unsigned long below_a5_size = 0;
+    const char* code0_file = NULL;
     const char* data0_file = NULL;
     const char* code1_file = NULL;
     const char* dump_file = "dump.bin";
 
     // Parse command line arguments
-    if (argc < 3) {
-        printf("Usage: %s <DATA_0_file> <CODE_1_file> [output_dump_file]\n", argv[0]);
+    if (argc < 4) {
+        printf("Usage: %s <CODE_0_file> <DATA_0_file> <CODE_1_file> [output_dump_file]\n", argv[0]);
         printf("  Creates a memory dump of the A5 world for static analysis\n");
         return 1;
     }
 
-    data0_file = argv[1];
-    code1_file = argv[2];
-    if (argc > 3) {
-        dump_file = argv[3];
+    code0_file = argv[1];
+    data0_file = argv[2];
+    code1_file = argv[3];
+    if (argc > 4) {
+        dump_file = argv[4];
+    }
+
+    // Load CODE 0 resource (jumptable)
+    if (code0_file != NULL) {
+        file = fopen(code0_file, "rb");
+        if (file == NULL) {
+            printf("ERROR: Cannot open CODE 0 resource file: %s\n", code0_file);
+            goto cleanup;
+        }
+
+        // Get file size
+        fseek(file, 0, SEEK_END);
+        file_size = ftell(file);
+        fseek(file, 0, SEEK_SET);
+        if (file_size < 16) {
+            printf("ERROR: CODE 0 resource file too small (need at least 16 bytes)\n");
+            fclose(file);
+            goto cleanup;
+        }
+
+        // Allocate buffer and read file
+        code0_resource = (char*)malloc(file_size);
+        if (code0_resource == NULL) {
+            printf("ERROR: Cannot allocate memory for CODE 0 resource (%ld bytes)\n", file_size);
+            goto cleanup;
+        }
+
+        if (fread(code0_resource, 1, file_size, file) != file_size) {
+            printf("ERROR: Failed to read CODE 0 resource file\n");
+            goto cleanup;
+        }
+
+        fclose(file);
+        file = NULL;
+
+        // Parse jumptable header (big-endian)
+        above_a5_size = read_be32(code0_resource);
+        code0_resource += 4;
+        below_a5_size = read_be32(code0_resource);
+        code0_resource += 4;
+        unsigned long jump_table_size = read_be32(code0_resource);
+        code0_resource += 4;
+        unsigned long jump_table_offset = read_be32(code0_resource);
+        code0_resource += 4;
+
+        printf("Jumptable info:\n");
+        printf("  Above A5 size: 0x%lx (%ld bytes)\n", above_a5_size, above_a5_size);
+        printf("  Below A5 size: 0x%lx (%ld bytes)\n", below_a5_size, below_a5_size);
+        printf("  Jump table size: 0x%lx (%ld bytes)\n", jump_table_size, jump_table_size);
+        printf("  Jump table offset: 0x%lx\n", jump_table_offset);
     }
 
     // Load DATA 0 resource
@@ -107,7 +189,7 @@ int main(int argc, char* argv[])
     }
 
     // Call the startup function with the loaded resources
-    a5_world_base = __Startup__(data0_resource, code1_resource, code1_size);
+    a5_world_base = __Startup__(data0_resource, code1_resource, code1_size, above_a5_size, below_a5_size);
     if (a5_world_base != NULL) {
         FILE* dump_output = fopen(dump_file, "wb");
         if (dump_output == NULL) {
@@ -116,7 +198,7 @@ int main(int argc, char* argv[])
         }
 
         // Calculate total dump size (A5 world + CODE resource at 0x10000)
-        const long total_a5_world_size = data_bytes_below_a5 + data_bytes_above_a5;
+        const long total_a5_world_size = below_a5_size + above_a5_size;
         const long total_dump_size = code_resource_offset + code1_size;
 
         // Write the entire dump to file
@@ -125,7 +207,7 @@ int main(int argc, char* argv[])
 
         if (written == total_dump_size) {
             printf("Memory dump created successfully: %ld bytes written\n", (long)written);
-            printf("A5 offset within dump: 0x%lx (decimal: %ld)\n", data_bytes_below_a5, data_bytes_below_a5);
+            printf("A5 offset within dump: 0x%lx (decimal: %ld)\n", below_a5_size, below_a5_size);
             printf("CODE resource offset within dump: 0x%lx (decimal: %ld)\n", code_resource_offset, code_resource_offset);
             printf("A5 world size: 0x%lx bytes\n", total_a5_world_size);
             printf("CODE resource size: 0x%lx bytes\n", code1_size);
@@ -139,6 +221,7 @@ int main(int argc, char* argv[])
         goto cleanup;
     }
 
+    if (code0_resource) free(code0_resource);
     if (data0_resource) free(data0_resource);
     if (code1_resource) free(code1_resource);
     if (a5_world_base) free(a5_world_base);
@@ -152,6 +235,7 @@ cleanup:
     }
 
     // Clean up allocated resources
+    if (code0_resource) free(code0_resource);
     if (data0_resource) free(data0_resource);
     if (code1_resource) free(code1_resource);
     if (a5_world_base) free(a5_world_base);
@@ -164,10 +248,10 @@ cleanup:
 /* Input....: ---						*/
 /* Returns..: ---						*/
 /****************************************************************/
-void* __Startup__(char *data0_resource, char *code1_resource, unsigned long code1_size)
+void* __Startup__(char *data0_resource, char *code1_resource, unsigned long code1_size, unsigned long above_a5_size, unsigned long below_a5_size)
 {
 	// Allocate memory for the entire dump (A5 world + CODE resource at 0x10000).
-    const long total_a5_world_size = data_bytes_below_a5 + data_bytes_above_a5;
+    const long total_a5_world_size = below_a5_size + above_a5_size;
     const long total_dump_size = code_resource_offset + code1_size;
     char* dump_base = (char*)malloc(total_dump_size);
     if (dump_base == NULL) {
@@ -176,9 +260,9 @@ void* __Startup__(char *data0_resource, char *code1_resource, unsigned long code
     memset(dump_base, 0, total_dump_size);
 
     // Calculate A5 position within the allocated memory.
-    char* a5_ptr = dump_base + data_bytes_below_a5;
+    char* a5_ptr = dump_base + below_a5_size;
     char* code_ptr = dump_base + code_resource_offset;
-	long a5_unrelocated = data_bytes_below_a5;
+	long a5_unrelocated = below_a5_size;
 	long code1_unrelocated = code_resource_offset;
 
     // Set up pointers for different regions.
@@ -222,10 +306,10 @@ void* __Startup__(char *data0_resource, char *code1_resource, unsigned long code
         xref_data_ptr = __relocate__(xref_data_ptr, code_ptr, a5_unrelocated, code1_unrelocated);
 
         printf("Dump allocated at: %p\n", dump_base);
-        printf("A5 pointer at: %p (offset 0x%lx)\n", a5_ptr, data_bytes_below_a5);
+        printf("A5 pointer at: %p (offset 0x%lx)\n", a5_ptr, below_a5_size);
         printf("CODE pointer at: %p (offset 0x%lx)\n", code_ptr, code_resource_offset);
-        printf("Below A5 size: 0x%lx bytes\n", data_bytes_below_a5);
-        printf("Above A5 size: 0x%lx bytes\n", data_bytes_above_a5);
+        printf("Below A5 size: 0x%lx bytes\n", below_a5_size);
+        printf("Above A5 size: 0x%lx bytes\n", above_a5_size);
         printf("Total A5 world size: 0x%lx bytes\n", total_a5_world_size);
         printf("CODE resource size: 0x%lx bytes\n", code1_size);
         printf("Total dump size: 0x%lx bytes\n", total_dump_size);
@@ -233,33 +317,6 @@ void* __Startup__(char *data0_resource, char *code1_resource, unsigned long code
 
     // Return the base of the allocated dump for writing
     return dump_base;
-}
-
-/****************************************************************/
-/* Purpose..: Decompress the DATA resource			*/
-/* Input....: pointer to DATA resource data			*/
-/* Input....: pointer to A5 resource				*/
-/* Returns..: pointer to data after init data			*/
-/****************************************************************/
-
-// Helper functions to read and write big-endian integers
-static inline unsigned long read_be32(const char* ptr) {
-	return ((unsigned char)ptr[0] << 24) |
-	       ((unsigned char)ptr[1] << 16) |
-	       ((unsigned char)ptr[2] << 8) |
-	       ((unsigned char)ptr[3]);
-}
-
-static inline unsigned short read_be16(const char* ptr) {
-	return ((unsigned char)ptr[0] << 8) |
-	       ((unsigned char)ptr[1]);
-}
-
-static inline void write_be32(char* ptr, unsigned long value) {
-	ptr[0] = (value >> 24) & 0xFF;
-	ptr[1] = (value >> 16) & 0xFF;
-	ptr[2] = (value >> 8) & 0xFF;
-	ptr[3] = value & 0xFF;
 }
 
 //
