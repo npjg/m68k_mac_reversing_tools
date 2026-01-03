@@ -40,7 +40,9 @@ public class M68kMacJankLoader extends GhidraScript {
             String name = parts[1].trim();
             createLabel(addr, name, true, SourceType.ANALYSIS);
         }
-        Address a5 = toAddr(getInt(toAddr(0x904))); // CurrentA5
+        // TODO: The Python jank dumper sets the A5 world to 0x904, but CodeWarrior dumps might set A5 world to something different.
+        // Right now, we just prompt for it - but later on we should automatically get it from somewhere.
+        Address a5 = askAddress("A5 Value", "Enter the A5 register value:");
 
         Address jumptable_entry = a5.addNoWrap(0x20);
         // TODO: actually check the addresses
