@@ -6,7 +6,8 @@
 
 **Disadvantage(s)**: Stack-based syscall arguments are ugly
 
-1. Make a dump using [dump.py](dump.py).
+
+1. Make a dump using [`dump/DumpGeneric68kCode.py`](dump/DumpGeneric68kCode.py).
 2. Put the files in [ghidra/processor](ghidra/processor) in `$GHIDRA_INSTALL/Ghidra/Processors/68000/data/languages/`.
 3. Put the files in [ghidra/data](ghidra/data) in `$GHIDRA_INSTALL/Ghidra/Features/Base/data/`.
 4. Add the scripts in [ghidra/scripts](ghidra/scripts) to Ghidra scripts. These will be in the `Analysis/M68k` category.
@@ -27,6 +28,6 @@
 
 **Disadvantage(s)**: Thunks in the jumptable don't automatically update name/function prototype
 
-1. Make a dump using [dump.py](dump.py).
+1. Make a dump using [`dump/DumpGeneric68kCode.py`](dump/DumpGeneric68kCode.py).
 2. Add [binary_ninja/loader](binary_ninja/loader) and [https://github.com/ubuntor/binaryninja-m68k](https://github.com/ubuntor/binaryninja-m68k) to Binary Ninja plugins.
 3. Open the dump. The loader should run automatically and start disassembling.
