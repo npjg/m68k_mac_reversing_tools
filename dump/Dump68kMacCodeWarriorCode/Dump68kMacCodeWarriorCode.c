@@ -1,9 +1,8 @@
-/************************************************************************/
+// Based on the following original source code:
 /* Project...: C++ and ANSI-C Compiler Environment			*/
 /* Name......: Startup.c						*/
 /* Purpose...: 68K application startup code example			*/
 /* Copyright.: Copyright � 1993-1997 Metrowerks, Inc.			*/
-/************************************************************************/
 
 #include <stdio.h>
 #include <stdlib.h>

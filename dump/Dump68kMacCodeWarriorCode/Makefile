@@ -1,8 +1,8 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -g -std=c99 -fno-omit-frame-pointer -O0
 
-TARGET = Appl68KStartup
-SOURCE = Appl68KStartup.c
+TARGET = Dump68kMacCodeWarriorCode
+SOURCE = Dump68kMacCodeWarriorCode.c
 
 # Default target
 all: $(TARGET)
