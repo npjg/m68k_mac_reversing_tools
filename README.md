@@ -10,9 +10,9 @@
 1. Make a dump using [`dump/DumpGeneric68kCode.py`](dump/DumpGeneric68kCode.py).
 2. Put the files in [ghidra/processor](ghidra/processor) in `$GHIDRA_INSTALL/Ghidra/Processors/68000/data/languages/`.
 3. Put the files in [ghidra/data](ghidra/data) in `$GHIDRA_INSTALL/Ghidra/Features/Base/data/`.
-4. Add the scripts in [ghidra/scripts](ghidra/scripts) to Ghidra scripts. These will be in the `Analysis/M68k` category.
+4. Add the scripts in [ghidra/scripts](ghidra/scripts) to Ghidra scripts. These will be in the `Analysis/M68k` category. (I just add the scripts directory where this repo is cloned to the Ghidra script manager.)
 5. Open the dump as processor `68000`, variant `Mac`.
-6. Run `M68kMacJankLoader.java` (find functions from jumptable), `M68kMacSymbols.java` (find symbols), `M68kMacPropagateThunks.java` (propagate thunk calls), and `M68kMacSyscallScript.java` (markup syscalls) in that order.
+6. Run `M68kMacJankLoader.java` (find functions from jumptable), `M68kMacSymbols.java` (find symbols), `M68kMacPropagateThunks.java` (propagate thunk calls), `M68kMacSyscallScript.java` (markup syscalls), and `CodeWarriorDemangler.java` in that order.
 
 ## TODO
 * Finish creating properly typed functions for `_FP68K` routines
