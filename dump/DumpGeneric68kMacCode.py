@@ -108,6 +108,7 @@ def dump_file(image_filename, path, out_filename):
 
     segment_bases = {}
     for i in codes:
+        # TODO: Add detection for when we likely have CodeWarrior, in which case this generic dump won't work.
         if i == 0:
             continue
         segment_header = codes[i][:4]
