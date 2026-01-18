@@ -48,6 +48,9 @@ custom CSPEC or not.
         <pentry minsize="1" maxsize="4">
           <register name="D0"/>
         </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="A0"/>
+        </pentry>
       </output>
       <unaffected>
         <register name="D2"/>
@@ -88,6 +91,32 @@ custom CSPEC or not.
       <register name="A4"/>
       <register name="A5"/>
       <register name="A6"/>
+    </unaffected>
+  </prototype>
+  <prototype name="__a0_return" extrapop="4" stackshift="4">
+    <input>
+      <pentry minsize="1" maxsize="500" align="2">
+        <addr offset="4" space="stack"/>
+      </pentry>
+    </input>
+    <output>
+      <pentry minsize="1" maxsize="4">
+        <register name="A0"/>
+      </pentry>
+    </output>
+    <unaffected>
+      <register name="D2"/>
+      <register name="D3"/>
+      <register name="D4"/>
+      <register name="D5"/>
+      <register name="D6"/>
+      <register name="D7"/>
+      <register name="A2"/>
+      <register name="A3"/>
+      <register name="A4"/>
+      <register name="A5"/>
+      <register name="A6"/>
+      <register name="SP"/>
     </unaffected>
   </prototype>
 </compiler_spec>
