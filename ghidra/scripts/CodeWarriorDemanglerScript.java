@@ -9,7 +9,10 @@ import ghidra.program.model.symbol.*;
 
 // Based on https://github.com/Cuyler36/Ghidra-CodeWarriorDemangler (MIT licensed).
 // Presented as a script here to avoid needing to install extensions and such. This likely
-// works for more than just 68k, hence why it isn't in the 68k folder.
+// works for more than just 68k, hence why it isn't in the 68k folder. Note that this has
+// some inconsistencies when compared against the disassembled demangler for
+// the "CODE Editor for ResEdit 2.1 (Super ResEdit)" extension, but it is close enough for
+// the symbols I have encountered thus far.
 public class CodeWarriorDemanglerScript extends GhidraScript {
 
     // Inner class containing the demangling logic
