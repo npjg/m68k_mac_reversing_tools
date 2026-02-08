@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <!--
-TODO: This is currently the same as the base 68k Mac cspec. These are the pecularities issues that
-seem to happen with CodeWarrior programs - it isn't clear if these can all even be fixed with a
-custom CSPEC or not.
+KNOWN LIMITATIONS:
+ - Doubles are decompiled as two 4-byte accesses (e.g., value._0_4_ and value._4_4_) even when correctly
+   typed as double. This is a fundamental Ghidra limitation on 32-bit architectures - since M68k has no
+   native 64-bit move instruction, doubles are physically moved as two 32-bit operations, and the
+   decompiler accurately reflects this assembly-level reality. Cannot be fixed via cspec alone.
 
- - Doubles are detected as two 4-byte entities, but this is probably because they are written as such.
+TODO:
  - When parameters are passed on the stack, variable sizes of 2 bytes (without padding to 4 bytes) happen
    totally acceptable; currently, Ghidra tries to force all stack parameters to 4 bytes, which messes up the stack.
  - Functions returning pointers in A0 are not detected.
@@ -30,7 +32,7 @@ custom CSPEC or not.
 		<entry size="1" alignment="1" />
 		<entry size="2" alignment="2" />
 		<entry size="4" alignment="4" />
-		<entry size="8" alignment="4" />
+		<entry size="8" alignment="2" />
 	</size_alignment_map>
   </data_organization>
   <global>
