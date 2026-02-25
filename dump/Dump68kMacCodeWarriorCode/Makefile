@@ -1,15 +1,15 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -g -std=c99 -fno-omit-frame-pointer -O0
+CXX = g++
+CXXFLAGS = -Wall -Wextra -g -std=c++17 -fno-omit-frame-pointer -O0
 
 TARGET = Dump68kMacCodeWarriorCode
-SOURCE = Dump68kMacCodeWarriorCode.c
+SOURCE = Dump68kMacCodeWarriorCode.cpp
 
 # Default target
 all: $(TARGET)
 
 # Build target
 $(TARGET): $(SOURCE)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SOURCE)
+	$(CXX) $(CXXFLAGS) -o $(TARGET) $(SOURCE)
 
 # Clean target
 clean:
@@ -20,7 +20,7 @@ debug: CFLAGS += -DDEBUG
 debug: $(TARGET)
 
 # Release build with optimization
-release: CFLAGS = -Wall -Wextra -std=c99 -O2 -DNDEBUG
+release: CXXFLAGS = -Wall -Wextra -std=c++17 -O2 -DNDEBUG
 release: $(TARGET)
 
 # Phony targets

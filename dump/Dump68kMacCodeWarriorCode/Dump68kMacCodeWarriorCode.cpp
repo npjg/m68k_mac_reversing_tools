@@ -4,13 +4,23 @@
 /* Purpose...: 68K application startup code example			*/
 /* Copyright.: Copyright � 1993-1997 Metrowerks, Inc.			*/
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <iostream>
+#include <filesystem>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
-void* __Startup__(char *data0_resource, char *code1_resource, unsigned long code1_size, unsigned long above_a5_size, unsigned long below_a5_size);
-static char *		__relocate__(char *xref, char *segm, unsigned long a5_base, unsigned long code1_base);	// forward
-static char		*__decomp_data__(char *ptr,char *datasegment);	// forward
+namespace fs = std::filesystem;
+
+// Forward declare the core C logic functions.
+extern "C" {
+    void* __Startup__(char *data0_resource, char *code1_resource, unsigned long code1_size, unsigned long above_a5_size, unsigned long below_a5_size);
+    static char *__relocate__(char *xref, char *segm, unsigned long a5_base, unsigned long code1_base);
+    static char *__decomp_data__(char *ptr,char *datasegment);
+}
 
 const long code_resource_offset = 0x60000;
 
@@ -41,10 +51,130 @@ static inline void write_be32(char* ptr, unsigned long value) {
 	ptr[3] = value & 0xFF;
 }
 
-// TODO: Add some way to detect if this actually IS a CodeWarrior compiled program so we don't write
-// a junk dump.
-int main(int argc, char* argv[])
-{
+// C++ functionality to help with directory scanning of the resource_dasm resource export. Really, we should just parse
+// the MacBinary files directly, but this provides a bit more flexibility until we are ready for that.
+struct ResourceFiles {
+    std::string code0_path;
+    std::string data0_path;
+    std::string code1_path;
+    std::string basename;
+};
+int dump(const ResourceFiles& resources, const std::string& dump_filename);
+bool find_resource_files(const std::string& directory_path, ResourceFiles& resources);
+
+int main(int argc, char* argv[]) {
+    // Parse command line arguments.
+    if (argc < 2) {
+        std::cout << "Usage: " << argv[0] << " <resources_directory> [output_dump_file]" << std::endl;
+        std::cout << "  Dumps a 68k Mac application compiled with CodeWarrior for importing into Ghidra." << std::endl;
+        std::cout << "  Handles the custom CodeWarrior A5 world/relocation information encoding." << std::endl;
+        std::cout << std::endl;
+        std::cout << "  The directory must contain exactly one of each:" << std::endl;
+        std::cout << "    *_CODE_0.bin" << std::endl;
+        std::cout << "    *_DATA_0.bin" << std::endl;
+        std::cout << "    *_CODE_1.bin" << std::endl;
+        return 1;
+    }
+
+    std::string directory_path = argv[1];
+    std::string dump_filename = "dump.bin";
+    if (argc > 2) {
+        dump_filename = argv[2];
+    }
+
+    // Find resource files in directory.
+    ResourceFiles resources;
+    if (!find_resource_files(directory_path, resources)) {
+        return 1;
+    }
+
+    // Use basename for output file if not specified.
+    if (argc <= 2) {
+        dump_filename = resources.basename + "_dump.bin";
+    }
+
+    // Execute dump logic.
+    return dump(resources, dump_filename);
+}
+
+bool find_resource_files(const std::string& directory_path, ResourceFiles& resources) {
+    // Verify directory exists
+    if (!fs::exists(directory_path) || !fs::is_directory(directory_path)) {
+        std::cerr << "ERROR: Directory does not exist: " << directory_path << std::endl;
+        return false;
+    }
+
+    std::vector<std::string> code0_candidates;
+    std::vector<std::string> data0_candidates;
+    std::vector<std::string> code1_candidates;
+
+    // Find all matching BIN files from the export.
+    for (const auto& entry : fs::directory_iterator(directory_path)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+
+        std::string filename = entry.path().filename().string();
+        std::string extension = entry.path().extension().string();
+
+        // VALIDATE: Extension must be .bin
+        if (extension != ".bin") {
+            continue;
+        }
+
+        // CATEGORIZE: Based on resource type in filename
+        if (filename.find("_CODE_0") != std::string::npos) {
+            code0_candidates.push_back(entry.path().string());
+        } else if (filename.find("_DATA_0") != std::string::npos) {
+            data0_candidates.push_back(entry.path().string());
+        } else if (filename.find("_CODE_1") != std::string::npos) {
+            code1_candidates.push_back(entry.path().string());
+        }
+    }
+
+    // Validate that exactly one of each resource type exists
+    bool all_resources_found =
+        code0_candidates.size() == 1 &&
+        data0_candidates.size() == 1 &&
+        code1_candidates.size() == 1;
+
+    if (!all_resources_found) {
+        std::cerr << "ERROR: Could not find exactly one of each required resource file" << std::endl;
+        std::cerr << "  Found " << code0_candidates.size() << " *_CODE_0.bin file(s)" << std::endl;
+        std::cerr << "  Found " << data0_candidates.size() << " *_DATA_0.bin file(s)" << std::endl;
+        std::cerr << "  Found " << code1_candidates.size() << " *_CODE_1.bin file(s)" << std::endl;
+        std::cerr << "Required: Exactly one of each file matching patterns:" << std::endl;
+        std::cerr << "  *_CODE_0.bin" << std::endl;
+        std::cerr << "  *_DATA_0.bin" << std::endl;
+        std::cerr << "  *_CODE_1.bin" << std::endl;
+        return false;
+    }
+
+    // Extract basename from CODE_0 filename.
+    std::string code0_filename = fs::path(code0_candidates[0]).filename().string();
+    size_t suffix_pos = code0_filename.find("_CODE_0.bin");
+    resources.basename = code0_filename.substr(0, suffix_pos);
+
+    resources.code0_path = code0_candidates[0];
+    resources.data0_path = data0_candidates[0];
+    resources.code1_path = code1_candidates[0];
+
+    std::cout << "Found resource files with basename: " << resources.basename << std::endl;
+    std::cout << "  CODE_0: " << resources.code0_path << std::endl;
+    std::cout << "  DATA_0: " << resources.data0_path << std::endl;
+    std::cout << "  CODE_1: " << resources.code1_path << std::endl;
+
+    return true;
+}
+
+// Execute the dump logic with discovered resource files
+int dump(const ResourceFiles& resources, const std::string& dump_filename) {
+    // EXTRACT: Convert C++ strings to C strings before entering goto section
+    const char* code0_file = resources.code0_path.c_str();
+    const char* data0_file = resources.data0_path.c_str();
+    const char* code1_file = resources.code1_path.c_str();
+    const char* dump_file_cstr = dump_filename.c_str();
+
     char* data0_resource = NULL;
     char* code0_resource = NULL;
     char* code1_resource = NULL;
@@ -54,24 +184,6 @@ int main(int argc, char* argv[])
     unsigned long code1_size = 0;
     unsigned long above_a5_size = 0;
     unsigned long below_a5_size = 0;
-    const char* code0_file = NULL;
-    const char* data0_file = NULL;
-    const char* code1_file = NULL;
-    const char* dump_file = "dump.bin";
-
-    // Parse command line arguments
-    if (argc < 4) {
-        printf("Usage: %s <CODE_0_file> <DATA_0_file> <CODE_1_file> [output_dump_file]\n", argv[0]);
-        printf("  Dumps a 68k Mac application compiled with CodeWarrior for importing into Ghidra. Handles the custom CodeWarrior A5 world/relocation information encoding.\n");
-        return 1;
-    }
-
-    code0_file = argv[1];
-    data0_file = argv[2];
-    code1_file = argv[3];
-    if (argc > 4) {
-        dump_file = argv[4];
-    }
 
     // Load CODE 0 resource (jumptable)
     if (code0_file != NULL) {
@@ -190,9 +302,9 @@ int main(int argc, char* argv[])
     // Call the startup function with the loaded resources
     a5_world_base = __Startup__(data0_resource, code1_resource, code1_size, above_a5_size, below_a5_size);
     if (a5_world_base != NULL) {
-        FILE* dump_output = fopen(dump_file, "wb");
+        FILE* dump_output = fopen(dump_file_cstr, "wb");
         if (dump_output == NULL) {
-            printf("ERROR: Cannot create dump file: %s\n", dump_file);
+            printf("ERROR: Cannot create dump file: %s\n", dump_file_cstr);
             goto cleanup;
         }
 
@@ -205,7 +317,7 @@ int main(int argc, char* argv[])
         fclose(dump_output);
 
         if (written == total_dump_size) {
-            printf("Memory dump created successfully: %ld bytes written\n", (long)written);
+            printf("Memory dump created successfully: %ld bytes written to %s\n", (long)written, dump_file_cstr);
             printf("A5 offset within dump: 0x%lx (decimal: %ld)\n", below_a5_size, below_a5_size);
             printf("CODE resource offset within dump: 0x%lx (decimal: %ld)\n", code_resource_offset, code_resource_offset);
             printf("A5 world size: 0x%lx bytes\n", total_a5_world_size);
