@@ -5,6 +5,7 @@
 /* Copyright.: Copyright � 1993-1997 Metrowerks, Inc.			*/
 
 #include <iostream>
+#include <fstream>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -168,11 +169,18 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     const char* code1_file = resources.code1_path.c_str();
     const char* dump_file_cstr = dump_filename.c_str();
 
-    char* data0_resource = NULL;
-    char* code0_resource = NULL;
-    char* code1_resource = NULL;
-    void* a5_world_base = NULL;
-    FILE* file = NULL;
+    // Use vectors for automatic memory management
+    std::vector<char> code0_buffer;
+    std::vector<char> data0_buffer;
+    std::vector<char> code1_buffer;
+    std::vector<char> a5_world_buffer;
+
+    // Pointers that can be modified to read through the buffers
+    char* data0_resource = nullptr;
+    char* code0_resource = nullptr;
+    char* code1_resource = nullptr;
+    void* a5_world_base = nullptr;
+
     unsigned long file_size;
     unsigned long code1_size = 0;
     unsigned long above_a5_size = 0;
@@ -180,38 +188,30 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
 
     // Load CODE 0 resource (jumptable)
     if (code0_file != NULL) {
-        file = fopen(code0_file, "rb");
-        if (file == NULL) {
+        std::ifstream code0_stream(code0_file, std::ios::binary | std::ios::ate);
+        if (!code0_stream.is_open()) {
             printf("ERROR: Cannot open CODE 0 resource file: %s\n", code0_file);
-            goto cleanup;
+            return 1;
         }
 
         // Get file size
-        fseek(file, 0, SEEK_END);
-        file_size = ftell(file);
-        fseek(file, 0, SEEK_SET);
+        file_size = code0_stream.tellg();
+        code0_stream.seekg(0, std::ios::beg);
         if (file_size < 16) {
             printf("ERROR: CODE 0 resource file too small (need at least 16 bytes)\n");
-            fclose(file);
-            goto cleanup;
+            return 1;
         }
 
         // Allocate buffer and read file
-        code0_resource = (char*)malloc(file_size);
-        if (code0_resource == NULL) {
-            printf("ERROR: Cannot allocate memory for CODE 0 resource (%ld bytes)\n", file_size);
-            goto cleanup;
-        }
-
-        if (fread(code0_resource, 1, file_size, file) != file_size) {
+        code0_buffer.resize(file_size);
+        code0_stream.read(code0_buffer.data(), file_size);
+        if (!code0_stream || code0_stream.gcount() != static_cast<std::streamsize>(file_size)) {
             printf("ERROR: Failed to read CODE 0 resource file\n");
-            goto cleanup;
+            return 1;
         }
 
-        fclose(file);
-        file = NULL;
-
-        // Parse jumptable header (big-endian)
+        // Parse jumptable header (big-endian) - use pointer to read through buffer
+        code0_resource = code0_buffer.data();
         above_a5_size = read_be32(code0_resource);
         code0_resource += 4;
         below_a5_size = read_be32(code0_resource);
@@ -230,121 +230,96 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
 
     // Load DATA 0 resource
     if (data0_file != NULL) {
-        file = fopen(data0_file, "rb");
-        if (file == NULL) {
+        std::ifstream data0_stream(data0_file, std::ios::binary | std::ios::ate);
+        if (!data0_stream.is_open()) {
             printf("ERROR: Cannot open DATA 0 resource file: %s\n", data0_file);
-            goto cleanup;
+            return 1;
         }
 
         // Get file size
-        fseek(file, 0, SEEK_END);
-        file_size = ftell(file);
-        fseek(file, 0, SEEK_SET);
+        file_size = data0_stream.tellg();
+        data0_stream.seekg(0, std::ios::beg);
 
         // Allocate buffer and read file
-        data0_resource = (char*)malloc(file_size);
-        if (data0_resource == NULL) {
-            printf("ERROR: Cannot allocate memory for DATA 0 resource (%ld bytes)\n", file_size);
-            goto cleanup;
-        }
-
-        if (fread(data0_resource, 1, file_size, file) != file_size) {
+        data0_buffer.resize(file_size);
+        data0_stream.read(data0_buffer.data(), file_size);
+        if (!data0_stream || data0_stream.gcount() != static_cast<std::streamsize>(file_size)) {
             printf("ERROR: Failed to read DATA 0 resource file\n");
-            goto cleanup;
+            return 1;
         }
 
-        fclose(file);
-        file = NULL;
+        data0_resource = data0_buffer.data();
     }
 
     // Load CODE 1 resource
     if (code1_file != NULL) {
-        file = fopen(code1_file, "rb");
-        if (file == NULL) {
+        std::ifstream code1_stream(code1_file, std::ios::binary | std::ios::ate);
+        if (!code1_stream.is_open()) {
             printf("ERROR: Cannot open CODE 1 resource file: %s\n", code1_file);
-            goto cleanup;
+            return 1;
         }
 
         // Get file size
-        fseek(file, 0, SEEK_END);
-        file_size = ftell(file);
-        fseek(file, 0, SEEK_SET);
+        file_size = code1_stream.tellg();
+        code1_stream.seekg(0, std::ios::beg);
         if (file_size <= 0) {
             printf("ERROR: Invalid CODE 1 resource file size: %ld\n", file_size);
-            goto cleanup;
+            return 1;
         }
 
         code1_size = file_size; // Store the size for later use
 
         // Allocate buffer and read file
-        code1_resource = (char*)malloc(file_size);
-        if (code1_resource == NULL) {
-            printf("ERROR: Cannot allocate memory for CODE 1 resource (%ld bytes)\n", file_size);
-            goto cleanup;
-        }
-
-        if (fread(code1_resource, 1, file_size, file) != file_size) {
+        code1_buffer.resize(file_size);
+        code1_stream.read(code1_buffer.data(), file_size);
+        if (!code1_stream || code1_stream.gcount() != static_cast<std::streamsize>(file_size)) {
             printf("ERROR: Failed to read CODE 1 resource file\n");
-            goto cleanup;
+            return 1;
         }
 
-        fclose(file);
-        file = NULL;
+        code1_resource = code1_buffer.data();
     }
 
     // Call the startup function with the loaded resources
     a5_world_base = __Startup__(data0_resource, code1_resource, code1_size, above_a5_size, below_a5_size);
-    if (a5_world_base != NULL) {
-        FILE* dump_output = fopen(dump_file_cstr, "wb");
-        if (dump_output == NULL) {
-            printf("ERROR: Cannot create dump file: %s\n", dump_file_cstr);
-            goto cleanup;
-        }
-
-        // Calculate total dump size (A5 world + CODE resource at 0x10000)
-        const long total_a5_world_size = below_a5_size + above_a5_size;
-        const long total_dump_size = code_resource_offset + code1_size;
-
-        // Write the entire dump to file
-        size_t written = fwrite(a5_world_base, 1, total_dump_size, dump_output);
-        fclose(dump_output);
-
-        if (written == total_dump_size) {
-            printf("Memory dump created successfully: %ld bytes written to %s\n", (long)written, dump_file_cstr);
-            printf("A5 offset within dump: 0x%lx (decimal: %ld)\n", below_a5_size, below_a5_size);
-            printf("CODE resource offset within dump: 0x%lx (decimal: %ld)\n", code_resource_offset, code_resource_offset);
-            printf("A5 world size: 0x%lx bytes\n", total_a5_world_size);
-            printf("CODE resource size: 0x%lx bytes\n", code1_size);
-        } else {
-            printf("ERROR: Incomplete memory dump - only %ld of %ld bytes written\n",
-                   (long)written, total_dump_size);
-            goto cleanup;
-        }
-    } else {
+    if (a5_world_base == nullptr) {
         printf("ERROR: A5 world setup failed\n");
-        goto cleanup;
+        return 1;
     }
 
-    if (code0_resource) free(code0_resource);
-    if (data0_resource) free(data0_resource);
-    if (code1_resource) free(code1_resource);
-    if (a5_world_base) free(a5_world_base);
+    // Store in vector for automatic cleanup
+    const long total_dump_size = code_resource_offset + code1_size;
+    a5_world_buffer.resize(total_dump_size);
+    std::memcpy(a5_world_buffer.data(), a5_world_base, total_dump_size);
+    free(a5_world_base);  // Free the malloc'd memory from __Startup__
+    a5_world_base = nullptr;
+
+    std::ofstream dump_output(dump_file_cstr, std::ios::binary);
+    if (!dump_output.is_open()) {
+        printf("ERROR: Cannot create dump file: %s\n", dump_file_cstr);
+        return 1;
+    }
+
+    // Calculate total dump size (A5 world + CODE resource at 0x10000)
+    const long total_a5_world_size = below_a5_size + above_a5_size;
+
+    // Write the entire dump to file
+    dump_output.write(a5_world_buffer.data(), total_dump_size);
+    bool write_success = dump_output.good();
+    dump_output.close();
+
+    if (!write_success) {
+        printf("ERROR: Failed to write complete memory dump\n");
+        return 1;
+    }
+
+    printf("Memory dump created successfully: %ld bytes written to %s\n", total_dump_size, dump_file_cstr);
+    printf("A5 offset within dump: 0x%lx (decimal: %ld)\n", below_a5_size, below_a5_size);
+    printf("CODE resource offset within dump: 0x%lx (decimal: %ld)\n", code_resource_offset, code_resource_offset);
+    printf("A5 world size: 0x%lx bytes\n", total_a5_world_size);
+    printf("CODE resource size: 0x%lx bytes\n", code1_size);
 
     return 0;
-
-cleanup:
-    // Clean up file handle if still open
-    if (file != NULL) {
-        fclose(file);
-    }
-
-    // Clean up allocated resources
-    if (code0_resource) free(code0_resource);
-    if (data0_resource) free(data0_resource);
-    if (code1_resource) free(code1_resource);
-    if (a5_world_base) free(a5_world_base);
-
-    return 1;
 }
 
 /****************************************************************/
@@ -422,7 +397,6 @@ void* __Startup__(char *data0_resource, char *code1_resource, unsigned long code
     // Return the base of the allocated dump for writing
     return dump_base;
 }
-
 
 /****************************************************************/
 /* Purpose..: Decompress the DATA resource			*/
