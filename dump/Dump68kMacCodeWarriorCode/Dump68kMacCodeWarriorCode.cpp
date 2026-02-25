@@ -24,13 +24,6 @@ extern "C" {
 
 const long code_resource_offset = 0x60000;
 
-/****************************************************************/
-/* Purpose..: Decompress the DATA resource			*/
-/* Input....: pointer to DATA resource data			*/
-/* Input....: pointer to A5 resource				*/
-/* Returns..: pointer to data after init data			*/
-/****************************************************************/
-
 // Helper functions to read and write big-endian integers
 static inline unsigned long read_be32(const char* ptr) {
 	return ((unsigned char)ptr[0] << 24) |
@@ -429,6 +422,14 @@ void* __Startup__(char *data0_resource, char *code1_resource, unsigned long code
     // Return the base of the allocated dump for writing
     return dump_base;
 }
+
+
+/****************************************************************/
+/* Purpose..: Decompress the DATA resource			*/
+/* Input....: pointer to DATA resource data			*/
+/* Input....: pointer to A5 resource				*/
+/* Returns..: pointer to data after init data			*/
+/****************************************************************/
 
 //
 //	Pack Patterns:
