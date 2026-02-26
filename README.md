@@ -5,7 +5,7 @@
 1. Make a dump using one of the [dumpers](dump/) corresponding to your compiler.
 2. Install the `M68kMacLanguage` Ghidra extension provided in this repo.
 3. Open the dump as processor `68000`, variant `Mac`, and the compiler of your choice.
-4. Run `M68kMacJankLoader.java` (find functions from jumptable), `M68kMacSymbols.java` (find symbols), `M68kMacPropagateThunks.java` (propagate thunk calls), `M68kMacSyscallScript.java` (markup syscalls), and `CodeWarriorDemangler.java` in that order.
+4. Run the `RunAllM68kMacAnalysis.java` script (or its constituents).
 
 # Dump Structure
 The dumpers are conceptually very simple - they first create a low-memory region for Mac OS globals, then construct an A5 world (and jump table within it), then relocate and append the CODE resources sequentially:
