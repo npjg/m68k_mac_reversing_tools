@@ -1,59 +1,80 @@
-import struct
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import os
+from mrcrowbar.lib.containers import mac
+from mrcrowbar import utils
+
 import machfs
 import macresources
-import collections
-import argparse
-import sys
 
-# make custom jank dump of code
+import argparse
+import collections
+
+ResourceFork = dict[bytes, dict[int, macresources.main.Resource]]
 
 SYSTEM_RAM_SIZE = 0x10000
 DUMMY_ADDR = 0xFFFFFFFF
 
 # m68k is big endian
-def u16(x):
-    return struct.unpack(">H", x)[0]
+u16 = utils.from_uint16_be
+i16 = utils.from_int16_be
+u32 = utils.from_uint32_be
 
+to_u16 = utils.to_uint16_be
+to_u32 = utils.to_uint32_be
 
-def u16s(x):
-    return struct.unpack(">h", x)[0]
-
-
-def u32(x):
-    return struct.unpack(">I", x)[0]
-
-
-def p16(x):
-    return struct.pack(">H", x)
-
-
-def p32(x):
-    return struct.pack(">I", x)
-
-
-def u16_to_s16(x):
+def u16_to_i16(x: int) -> int:
     if x & 0x8000:
         x -= 0x10000
     return x
 
-
-def dump_file(image_filename, path, out_filename):
-    print(f"dumping {'/'.join([image_filename]+path)} to {out_filename}")
-    rsrcs = collections.defaultdict(dict)
+def get_file_from_volume(image_filename: str, path: list[str] | None) -> tuple[bytes, ResourceFork]:
+    rsrcs: ResourceFork = collections.defaultdict(dict)
 
     with open(image_filename, "rb") as f:
         flat = f.read()
         v = machfs.Volume()
         v.read(flat)
         print(v)
-        for i in path:
-            v = v[i]
-        for i in macresources.parse_file(v.rsrc):
-            rsrcs[i.type][i.id] = i
+        if not path:
+            raise ValueError("Need to specify path")
+        for p in path:
+            v = v[p]
+        for ax in macresources.parse_file(v.rsrc):
+            rsrcs[ax.type][ax.id] = ax
 
-    for i in rsrcs:
-        print(i)
-        for j, r in rsrcs[i].items():
+        return v.data, rsrcs
+
+def get_file_from_macbinary(path: str) -> tuple[bytes, ResourceFork]:
+    f = open(path, 'rb').read()
+    mb = mac.MacBinary(f)
+    rsrcs: ResourceFork = collections.defaultdict(dict)
+    for i in macresources.parse_file(mb.resource):
+        rsrcs[i.type][i.id] = i
+
+    return mb.data, rsrcs
+
+def dump_file(source: str, target: str, path: list[str] | None) -> None:
+    print(f"dumping {':'.join([source]+(path if path else []))} to {target}")
+    with open(source, "rb") as f:
+        f.seek(122, os.SEEK_SET)
+        mb_test = (u16(f.read(2)) & 0xfcff) == 0x8081
+        f.seek(0x400, os.SEEK_SET)
+        vol_test = f.read(2)
+
+    if vol_test == b"BD" or vol_test == "H+":
+        _, rsrcs = get_file_from_volume(source, path)
+    elif mb_test:
+        _, rsrcs = get_file_from_macbinary(source)
+    else:
+        raise ValueError(f"File {source} must be a HFS disk image or MacBinary file")
+    return dump_file_from_resources(rsrcs, target)
+
+def dump_file_from_resources(rsrcs: ResourceFork, out_filename: str) -> None:
+    for rx in rsrcs:
+        print(rx)
+        for j, r in rsrcs[rx].items():
             if r.name != None:
                 print(f"    {j}: {r.name}")
             else:
@@ -77,10 +98,10 @@ def dump_file(image_filename, path, out_filename):
     assert jump_table_offset == 0x20
 
     a5 = below_a5_size + SYSTEM_RAM_SIZE
-    for i in codes:
-        if i == 0:
+    for c in codes:
+        if c == 0:
             continue
-        a5 += len(codes[i]) - 4
+        a5 += len(codes[c]) - 4
     if b"STRS" in rsrcs:
         a5 += len(rsrcs[b"STRS"][0])
 
@@ -92,28 +113,26 @@ def dump_file(image_filename, path, out_filename):
     # small function to force binary ninja to set the value of a5 as a global reg
     # move.l #a5_value, a5
     # rts
-    header += b"\x2a\x7c" + p32(a5) + b"\x4e\x75"
+    header += b"\x2a\x7c" + to_u32(a5) + b"\x4e\x75"
 
     # CREATE SYSTEM RAM.
     # The header goes at the very start of system RAM.
     # TODO: Can we write the header any better? Maybe by changing the system RAM in-place?
     system_ram = bytearray(header + bytes(SYSTEM_RAM_SIZE - len(header)))
-    system_ram[0x904:0x908] = p32(a5)
+    system_ram[0x904:0x908] = to_u32(a5)
     dump += system_ram
 
-    # TODO: Figure out where the STRS resources come from.
     if b"STRS" in rsrcs:
         strs_base = len(dump)
         dump += rsrcs[b"STRS"][0]
 
     segment_bases = {}
-    for i in codes:
-        # TODO: Add detection for when we likely have CodeWarrior, in which case this generic dump won't work.
-        if i == 0:
+    for c in codes:
+        if c == 0:
             continue
-        segment_header = codes[i][:4]
-        segment_data = bytearray(codes[i][4:])
-        segment_bases[i] = len(dump)
+        segment_header = codes[c][:4]
+        segment_data = bytearray(codes[c][4:])
+        segment_bases[c] = len(dump)
         first_jumptable_entry_offset = u16(segment_header[:2])
         needs_relocations = False
         if first_jumptable_entry_offset & 0x8000:
@@ -125,7 +144,7 @@ def dump_file(image_filename, path, out_filename):
             jumptable_entry_num &= ~0x8000
             far_header = True
         print(
-            f"code segment {i}: first offset {first_jumptable_entry_offset:04x}, {jumptable_entry_num} jumptable entries",
+            f"code segment {c}: first offset {first_jumptable_entry_offset:04x}, {jumptable_entry_num} jumptable entries",
             end="",
         )
         if needs_relocations:
@@ -136,8 +155,8 @@ def dump_file(image_filename, path, out_filename):
         # Think C (Symantec) relocations
         if needs_relocations and jumptable_entry_num > 0:
             # TODO: refactor
-            for j in range(0, len(crels[i]), 2):
-                addr = u16(crels[i][j : j + 2]) - 4  # -4 from header
+            for j in range(0, len(crels[c]), 2):
+                addr = u16(crels[c][j : j + 2]) - 4  # -4 from header
                 if addr & 0x1:
                     print("STRS patch ", end="")
                     base = strs_base
@@ -147,8 +166,8 @@ def dump_file(image_filename, path, out_filename):
                     base = a5
                 data = u32(segment_data[addr : addr + 4])
                 data2 = (data + base) & 0xFFFFFFFF
-                segment_data[addr : addr + 4] = p32(data2)
-                print(f"seg {i} addr {addr:04x} ({data:08x} -> {data2:08x})")
+                segment_data[addr : addr + 4] = to_u32(data2)
+                print(f"seg {c} addr {addr:04x} ({data:08x} -> {data2:08x})")
         dump += bytes(segment_data)
 
     # construct a5 world
@@ -190,14 +209,12 @@ def dump_file(image_filename, path, out_filename):
             )
             segment_num = 0  # dummy
             addr = DUMMY_ADDR
-        a5_world += p16(segment_num)
+        a5_world += to_u16(segment_num)
         a5_world += b"\x4e\xf9"  # jmp
-        a5_world += p32(addr)
+        a5_world += to_u32(addr)
 
     below_a5_data = bytes(below_a5_size)
 
-    # TODO: What actually is the ZERO resource? It seems to be peculiar to
-    # some individual compiler, as CodeWarrior doesn't have it.
     if b"ZERO" in rsrcs and b"DATA" in rsrcs:
         data_rsrc = bytes(rsrcs[b"DATA"][0])
         zero_rsrc = bytes(rsrcs[b"ZERO"][0])
@@ -218,21 +235,21 @@ def dump_file(image_filename, path, out_filename):
             drel_rsrc = bytes(rsrcs[b"DREL"][0])
             i = 0
             while i < len(drel_rsrc):
-                addr = u16s(drel_rsrc[i : i + 2])
+                addr = i16(drel_rsrc[i : i + 2])
                 if addr >= 0:
                     i += 2
                     addr = -u16(drel_rsrc[i : i + 2])
                 if addr & 0x1:
                     print("STRS patch ", end="")
                     base = strs_base
-                    addr = u16_to_s16(addr & 0xFFFE)
+                    addr = u16_to_i16(addr & 0xFFFE)
                 else:
                     print("A5 patch ", end="")
                     base = a5
                 addr += below_a5_size  # DREL relative to a5
                 data = u32(below_a5_data[addr : addr + 4])
                 data2 = (data + base) & 0xFFFFFFFF
-                below_a5_data[addr : addr + 4] = p32(data2)
+                below_a5_data[addr : addr + 4] = to_u32(data2)
                 print(f"data addr {addr:04x} ({data:08x} -> {data2:08x})")
                 i += 2
             below_a5_data = bytes(below_a5_data) + bytes(
@@ -245,15 +262,15 @@ def dump_file(image_filename, path, out_filename):
 
     open(out_filename, "wb").write(dump)
 
-
 def main():
-    parser = argparse.ArgumentParser(description='Dump M68K Mac executable resources from disk images for loading into Ghidra')
-    parser.add_argument('image_file', help='Filepath of the HFS disk image')
-    parser.add_argument('path', help='Path to file within HFS disk image')
-    parser.add_argument('-o', help='Output filename for the dump')
-
+    parser = argparse.ArgumentParser(description="Dump and preprocess M68K Macintosh code")
+    parser.add_argument("source", help="Source file (disk image or MacBinary file)")
+    parser.add_argument("target", help="Output file")
+    parser.add_argument("--path", help="For disk images, path in the image to read (e.g. \"dir1:dir2:file\")")
     args = parser.parse_args()
-    dump_file(args.image_file, args.path, args.output)
+
+    path = args.path.split(":") if args.path else None
+    dump_file(args.source, args.target, path)
 
 if __name__ == "__main__":
     main()
