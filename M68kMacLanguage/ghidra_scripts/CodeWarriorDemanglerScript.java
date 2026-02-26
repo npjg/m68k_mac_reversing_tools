@@ -1,5 +1,7 @@
-//Demangles CodeWarrior symbols for functions
-//@category Demangler
+// Demangles CodeWarrior symbols for functions
+// TODO: Figure out if these are actually only CodeWarrior symbols, because THINK C C++
+// symbols also seem to demangle relatively well with this...
+// @category Demangler
 
 import java.util.ArrayList;
 import ghidra.app.script.GhidraScript;

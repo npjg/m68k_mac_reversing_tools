@@ -1,5 +1,5 @@
-//Finds MacsBug symbols for each function
-//@category Analysis.M68k
+// Apply MacsBug symbols for each function. No demangling is performed.
+// @category Analysis.M68k
 
 import java.io.*;
 import java.util.*;
@@ -21,13 +21,15 @@ public class M68kMacSymbols extends GhidraScript {
 
     @Override
     protected void run() throws Exception {
+        // Verify the processor.
+        // TODO: Also make sure we are on the Mac variant.
         if (!currentProgram.getLanguage().getProcessor().toString().equals("68000")) {
             printf("Processor: %s", currentProgram.getLanguage().getProcessor().toString());
             popup("Processor must be 68000");
             return;
         }
 
-        // get symbol as described in MacsBug Reference and Debugging Guide, Appendix D (Procedure Names)
+        // Get symbol as described in MacsBug Reference and Debugging Guide, Appendix D (Procedure Names).
         for (Function func : currentProgram.getFunctionManager().getFunctionsNoStubs(true)) {
             for (Instruction inst : currentProgram.getListing().getInstructions(func.getBody(), true)) {
                 for (byte[] ending : ENDINGS) {
@@ -46,8 +48,10 @@ public class M68kMacSymbols extends GhidraScript {
                             // So this is the length byte right here, and we want to read past it.
                             length = getByte(symbolAddr) & 0xff;
                             symbolAddr = symbolAddr.addNoWrap(1);
+
                         } else if (length > 0x80) {
                             length -= 0x80;
+
                         } else {
                             // TODO: 16 byte fixed length symbols
                             // With fixed-length format, the first byte is in the range $20 through $7F.
@@ -60,6 +64,7 @@ public class M68kMacSymbols extends GhidraScript {
                             length = 8;
                             symbolAddr = symbolAddr.addNoWrap(-1);
                         }
+
                         byte[] symbolBytes = getBytes(symbolAddr, length);
                         if (length > 0) {
                             boolean goodSymbol = true;
@@ -75,6 +80,7 @@ public class M68kMacSymbols extends GhidraScript {
                                     break;
                                 }
                             }
+
                             if (goodSymbol) {
                                 String symbol = new String(getBytes(symbolAddr, length));
                                 symbol = symbol.replace(" ", "_");
@@ -87,11 +93,11 @@ public class M68kMacSymbols extends GhidraScript {
                                 StringDataType stringDt = new StringDataType(dtm);
                                 Listing listing = currentProgram.getListing();
 
-                                // Undefine any existing data in the range to recreate it
+                                // Undefine any existing data in the range to recreate it.
                                 Address endAddr = symbolAddr.add(length - 1);
                                 listing.clearCodeUnits(symbolAddr, endAddr, false);
 
-                                // Create the string data type
+                                // Create the string data type.
                                 listing.createData(symbolAddr, stringDt, length);
                             }
                         }

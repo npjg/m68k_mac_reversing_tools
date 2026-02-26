@@ -26,23 +26,18 @@ import ghidra.util.exception.InvalidInputException;
 import ghidra.util.task.TaskMonitor;
 
 public class M68kMacSyscallScript extends GhidraScript {
-
     private static final String SYSCALL_SPACE_NAME = "syscall";
-
     private static final int SYSCALL_SPACE_LENGTH = 0x10000;
-
     private static final String FP68K_SPACE_NAME = "fp68k";
-
     private static final int FP68K_SPACE_LENGTH = 0x10000;
 
-    //this is the name of the userop (aka CALLOTHER) in the pcode translation of the
-    //native "syscall" instruction
+    // This is the name of the userop (aka CALLOTHER) in the pcode translation of the native "syscall" instruction.
     private static final String SYSCALL_CALLOTHER = "syscall";
 
-    //file containing map from syscall numbers to syscall names
+    // File containing map from syscall numbers to syscall names.
     private static final String syscallFileName = "m68k_mac_syscalls";
 
-    //the calling convention to use for system calls (must be defined in the appropriate .cspec file)
+    // The calling convention to use for system calls (must be defined in the appropriate CSPEC).
     private static final String callingConvention = "syscall";
 
     // File containing map from FP68K selectors to function info.
@@ -51,21 +46,21 @@ public class M68kMacSyscallScript extends GhidraScript {
 
     @Override
     protected void run() throws Exception {
+        // Verify the processor.
+        // TODO: Also make sure we are on the Mac variant.
         if (!currentProgram.getLanguage().getProcessor().toString().equals("68000")) {
             printf("Processor: %s", currentProgram.getLanguage().getProcessor().toString());
             popup("Processor must be 68000");
             return;
         }
 
-        //get the space where the system calls live.
-        //If it doesn't exist, create it.
+        // Get the space where the syscalls (non-FP68K) live. If it doesn't exist, create it.
         AddressSpace syscallSpace =
             currentProgram.getAddressFactory().getAddressSpace(SYSCALL_SPACE_NAME);
         if (syscallSpace == null) {
-            //don't muck with address spaces if you don't have exclusive access to the program.
+            // Don't muck with address spaces if we don't have exclusive access to the program.
             if (!currentProgram.hasExclusiveAccess()) {
-                popup("Must have exclusive access to " + currentProgram.getName() +
-                    " to run this script");
+                popup("Must have exclusive access to " + currentProgram.getName() + " to run this script");
                 return;
             }
             Address startAddr = currentProgram.getAddressFactory().getAddressSpace(
@@ -83,14 +78,12 @@ public class M68kMacSyscallScript extends GhidraScript {
             printf("AddressSpace %s found, continuing...\n", SYSCALL_SPACE_NAME);
         }
 
-        //get the space where FP68K functions live.
-        //If it doesn't exist, create it.
+        // Get the space where FP68K traps live. If it doesn't exist, create it.
         AddressSpace fp68kSpace =
             currentProgram.getAddressFactory().getAddressSpace(FP68K_SPACE_NAME);
         if (fp68kSpace == null) {
             if (!currentProgram.hasExclusiveAccess()) {
-                popup("Must have exclusive access to " + currentProgram.getName() +
-                    " to run this script");
+                popup("Must have exclusive access to " + currentProgram.getName() + " to run this script");
                 return;
             }
             Address startAddr = currentProgram.getAddressFactory().getAddressSpace(
@@ -108,8 +101,8 @@ public class M68kMacSyscallScript extends GhidraScript {
             printf("AddressSpace %s found, continuing...\n", FP68K_SPACE_NAME);
         }
 
-        //get all of the functions that contain system calls
-        //note that this will not find system call instructions that are not in defined functions
+        // Get all of the functions that contain system calls.
+        // Note that this will not find system call instructions that are not in defined functions.
         Map<Function, Map<Address, Long>> funcsToSyscalls = getSyscallsInFunctions(currentProgram, monitor);
         if (funcsToSyscalls.isEmpty()) {
             popup("No system calls found (within defined functions)");
