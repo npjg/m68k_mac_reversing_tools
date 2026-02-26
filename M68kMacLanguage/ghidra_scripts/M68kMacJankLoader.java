@@ -1,5 +1,5 @@
-//Creates functions from jumptable entries
-//@category Analysis.M68k
+// Creates functions from jumptable entries.
+// @category Analysis.M68k
 
 import java.io.*;
 import java.util.*;
@@ -22,14 +22,18 @@ public class M68kMacJankLoader extends GhidraScript {
 
     @Override
     protected void run() throws Exception {
+        // Verify the processor.
+        // TODO: Also make sure we are on the Mac variant.
         if (!currentProgram.getLanguage().getProcessor().toString().equals("68000")) {
             printf("Processor: %s", currentProgram.getLanguage().getProcessor().toString());
             popup("Processor must be 68000");
             return;
         }
+
+        // Parse the system globals data file.
         ResourceFile rFile = Application.findDataFileInAnyModule("m68k_mac_system_globals");
         if (rFile == null) {
-            popup("Could not find system globals file");
+            popup("Could not find m68k Mac system globals file");
             return;
         }
         BufferedReader br = new BufferedReader(new FileReader(rFile.getFile(false)));
@@ -40,7 +44,9 @@ public class M68kMacJankLoader extends GhidraScript {
             String name = parts[1].trim();
             createLabel(addr, name, true, SourceType.ANALYSIS);
         }
-        // TODO: The Python jank dumper sets the A5 world to 0x904, but CodeWarrior dumps might set A5 world to something different.
+
+        // Get the value of the A5 register.
+        // TODO: The THINK C dumper sets A5 to 0x904, but CodeWarrior can arbitrarily set A5.
         // Right now, we just prompt for it - but later on we should automatically get it from somewhere.
         Address a5 = askAddress("A5 Value", "Enter the A5 register value:");
 
@@ -67,6 +73,7 @@ public class M68kMacJankLoader extends GhidraScript {
             }
         } catch (MemoryAccessException|AddressOverflowException e) {
         }
+
         // first entry in jumptable is entry point
         Address startAddr = toAddr(getInt(a5.addNoWrap(0x20+4)));
         printf("startAddr is %s\n", startAddr);
@@ -83,7 +90,8 @@ public class M68kMacJankLoader extends GhidraScript {
             addEntryPoint(startAddr);
         }
 
-        // set value of a5 for the whole program
+        // Set value of A5 for the whole program.
+        // This is important to ensure all global data references in programs are resolved.
         AddressSpace space = currentProgram.getAddressFactory().getDefaultAddressSpace();
         SetRegisterCmd cmd = new SetRegisterCmd(currentProgram.getLanguage().getRegister("A5"),
             space.getMinAddress(),

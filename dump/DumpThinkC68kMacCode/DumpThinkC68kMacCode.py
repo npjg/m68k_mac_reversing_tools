@@ -104,6 +104,7 @@ def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None
         if code_resource == 0:
             continue
         a5 += len(code_resources[code_resource]) - 4
+
     if b"STRS" in resources:
         a5 += len(resources[b"STRS"][0])
 
