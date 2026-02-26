@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- 68k Mac Language Extension - adds Mac-specific calling conventions and syscall support -->
+<language_definitions>
+  <language processor="68000"
+            endian="big"
+            size="32"
+            variant="Mac"
+            version="1.1"
+            slafile="68000_mac.sla"
+            processorspec="68000.pspec"
+            manualindexfile="../manuals/68000.idx"
+            id="68000:BE:32:mac">
+    <description>Motorola 68000 (Classic Mac)</description>
+    <compiler name="default" spec="68000_mac.cspec" id="default"/>
+    <compiler name="codewarrior" spec="68000_mac_codewarrior.cspec" id="codewarrior"/>
+  </language>
+</language_definitions>

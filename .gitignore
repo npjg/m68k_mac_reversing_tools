@@ -1,3 +1,10 @@
 __pycache__/
 *.py[cod]
 *$py.class
+
+.gradle/
+build/
+dist/
+# Ignore base processor SLEIGH files (copied in as part of extension build process).
+*.sinc
+*.sla
