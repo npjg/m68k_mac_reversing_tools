@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <language_definitions>
+  <!-- TODO: Once this is a proper extension, the original 68000 stuff can be removed because it will not overwrite the default m68k stuff. -->
   <language processor="68000"
             endian="big"
             size="32"
@@ -17,6 +18,7 @@
     <external_name tool="IDA-PRO" name="68040"/>
     <external_name tool="IDA-PRO" name="68K"/>
   </language>
+
   <language processor="68000"
             endian="big"
             size="32"
@@ -31,6 +33,7 @@
     <external_name tool="gnu" name="m68k:68030"/>
     <external_name tool="IDA-PRO" name="68030"/>
   </language>
+
   <language processor="68000"
             endian="big"
             size="32"
@@ -47,6 +50,7 @@
     <external_name tool="IDA-PRO" name="68020"/>
     <external_name tool="IDA-PRO" name="68020EX"/>
   </language>
+
   <language processor="68000"
             endian="big"
             size="32"
@@ -60,6 +64,8 @@
     <compiler name="default" spec="68000.cspec" id="default"/>
     <external_name tool="IDA-PRO" name="colfire"/>
   </language>
+  <!-- END TODO -->
+
   <language processor="68000"
             endian="big"
             size="32"

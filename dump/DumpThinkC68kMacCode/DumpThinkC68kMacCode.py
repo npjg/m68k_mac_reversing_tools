@@ -16,7 +16,7 @@ ResourceFork = dict[bytes, dict[int, macresources.main.Resource]]
 SYSTEM_RAM_SIZE = 0x10000
 DUMMY_ADDR = 0xFFFFFFFF
 
-# m68k is big endian
+# M68k is big endian.
 u16 = utils.from_uint16_be
 i16 = utils.from_int16_be
 u32 = utils.from_uint32_be
@@ -29,67 +29,69 @@ def u16_to_i16(x: int) -> int:
         x -= 0x10000
     return x
 
-def get_file_from_volume(image_filename: str, path: list[str] | None) -> tuple[bytes, ResourceFork]:
-    rsrcs: ResourceFork = collections.defaultdict(dict)
+def get_file_from_volume(image_filepath: str, path_in_volume: list[str] | None) -> tuple[bytes, ResourceFork]:
+    resources: ResourceFork = collections.defaultdict(dict)
 
-    with open(image_filename, "rb") as f:
+    with open(image_filepath, "rb") as f:
         flat = f.read()
-        v = machfs.Volume()
-        v.read(flat)
-        print(v)
-        if not path:
-            raise ValueError("Need to specify path")
-        for p in path:
-            v = v[p]
-        for ax in macresources.parse_file(v.rsrc):
-            rsrcs[ax.type][ax.id] = ax
+        volume = machfs.Volume()
+        volume.read(flat)
+        print(volume)
+        if not path_in_volume:
+            raise ValueError("HFS volume was provided without path!")
+        for p in path_in_volume:
+            volume = volume[p]
+        for ax in macresources.parse_file(volume.rsrc):
+            resources[ax.type][ax.id] = ax
 
-        return v.data, rsrcs
+        return volume.data, resources
 
-def get_file_from_macbinary(path: str) -> tuple[bytes, ResourceFork]:
-    f = open(path, 'rb').read()
-    mb = mac.MacBinary(f)
-    rsrcs: ResourceFork = collections.defaultdict(dict)
-    for i in macresources.parse_file(mb.resource):
-        rsrcs[i.type][i.id] = i
+def get_file_from_macbinary(filepath: str) -> tuple[bytes, ResourceFork]:
+    f = open(filepath, 'rb').read()
+    macbinary = mac.MacBinary(f)
+    resources: ResourceFork = collections.defaultdict(dict)
+    for i in macresources.parse_file(macbinary.resource):
+        resources[i.type][i.id] = i
 
-    return mb.data, rsrcs
+    return macbinary.data, resources
 
-def dump_file(source: str, target: str, path: list[str] | None) -> None:
-    print(f"dumping {':'.join([source]+(path if path else []))} to {target}")
-    with open(source, "rb") as f:
+def dump_file(source_filepath: str, target_filepath: str, path: list[str] | None) -> None:
+    print(f"dumping {':'.join([source_filepath]+(path if path else []))} to {target_filepath}")
+    with open(source_filepath, "rb") as f:
         f.seek(122, os.SEEK_SET)
-        mb_test = (u16(f.read(2)) & 0xfcff) == 0x8081
+        is_likely_macbinary = (u16(f.read(2)) & 0xfcff) == 0x8081
+
         f.seek(0x400, os.SEEK_SET)
-        vol_test = f.read(2)
+        is_likely_hfs_volume = f.read(2)
 
-    if vol_test == b"BD" or vol_test == "H+":
-        _, rsrcs = get_file_from_volume(source, path)
-    elif mb_test:
-        _, rsrcs = get_file_from_macbinary(source)
+    if is_likely_hfs_volume == b"BD" or is_likely_hfs_volume == "H+":
+        _, resources = get_file_from_volume(source_filepath, path)
+    elif is_likely_macbinary:
+        _, resources = get_file_from_macbinary(source_filepath)
     else:
-        raise ValueError(f"File {source} must be a HFS disk image or MacBinary file")
-    return dump_file_from_resources(rsrcs, target)
+        raise ValueError(f"File {source_filepath} must be a HFS disk image or MacBinary file")
 
-def dump_file_from_resources(rsrcs: ResourceFork, out_filename: str) -> None:
-    for rx in rsrcs:
-        print(rx)
-        for j, r in rsrcs[rx].items():
+    return dump_file_from_resources(resources, target_filepath)
+
+def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None:
+    for resource_type in resources:
+        print(resource_type)
+        for j, r in resources[resource_type].items():
             if r.name != None:
                 print(f"    {j}: {r.name}")
             else:
                 print(f"    {j}")
 
-    if b"CODE" not in rsrcs:
+    if b"CODE" not in resources:
         print("Error: no executable code?")
         return
 
     # TODO: other resource types
 
-    codes = rsrcs[b"CODE"]
-    crels = rsrcs[b"CREL"]
+    code_resources = resources[b"CODE"]
+    crels = resources[b"CREL"]
 
-    jumptable = codes[0]
+    jumptable = code_resources[0]
     above_a5_size = u32(jumptable[:4])
     below_a5_size = u32(jumptable[4:8])
     jump_table_size = u32(jumptable[8:12])
@@ -98,12 +100,12 @@ def dump_file_from_resources(rsrcs: ResourceFork, out_filename: str) -> None:
     assert jump_table_offset == 0x20
 
     a5 = below_a5_size + SYSTEM_RAM_SIZE
-    for c in codes:
-        if c == 0:
+    for code_resource in code_resources:
+        if code_resource == 0:
             continue
-        a5 += len(codes[c]) - 4
-    if b"STRS" in rsrcs:
-        a5 += len(rsrcs[b"STRS"][0])
+        a5 += len(code_resources[code_resource]) - 4
+    if b"STRS" in resources:
+        a5 += len(resources[b"STRS"][0])
 
     # CREATE THE HEADER.
     dump = b""
@@ -119,32 +121,39 @@ def dump_file_from_resources(rsrcs: ResourceFork, out_filename: str) -> None:
     # The header goes at the very start of system RAM.
     # TODO: Can we write the header any better? Maybe by changing the system RAM in-place?
     system_ram = bytearray(header + bytes(SYSTEM_RAM_SIZE - len(header)))
+    # The A5 world is hardcoded at this address.
     system_ram[0x904:0x908] = to_u32(a5)
     dump += system_ram
 
-    if b"STRS" in rsrcs:
+    # TODO: Why do we do this?
+    if b"STRS" in resources:
         strs_base = len(dump)
-        dump += rsrcs[b"STRS"][0]
+        dump += resources[b"STRS"][0]
 
+    # Dump all code segments AFTER A5 world. (A5 world hasn't been constructed yet.)
     segment_bases = {}
-    for c in codes:
-        if c == 0:
+    for code_resource in code_resources:
+        if code_resource == 0:
             continue
-        segment_header = codes[c][:4]
-        segment_data = bytearray(codes[c][4:])
-        segment_bases[c] = len(dump)
+
+        segment_header = code_resources[code_resource][:4]
+        segment_data = bytearray(code_resources[code_resource][4:])
+        segment_bases[code_resource] = len(dump)
         first_jumptable_entry_offset = u16(segment_header[:2])
+
         needs_relocations = False
         if first_jumptable_entry_offset & 0x8000:
             first_jumptable_entry_offset &= ~0x8000
             needs_relocations = True
+
         jumptable_entry_num = u16(segment_header[2:])
         far_header = False
         if jumptable_entry_num & 0x8000:
             jumptable_entry_num &= ~0x8000
             far_header = True
+
         print(
-            f"code segment {c}: first offset {first_jumptable_entry_offset:04x}, {jumptable_entry_num} jumptable entries",
+            f"code segment {code_resource}: first offset {first_jumptable_entry_offset:04x}, {jumptable_entry_num} jumptable entries",
             end="",
         )
         if needs_relocations:
@@ -152,11 +161,13 @@ def dump_file_from_resources(rsrcs: ResourceFork, out_filename: str) -> None:
         if far_header:
             print(", far", end="")
         print()
-        # Think C (Symantec) relocations
+
+        # Perform THINK C (Symantec) relocations.
+        # CodeWarrior relocations are very different and require a different dumper.
         if needs_relocations and jumptable_entry_num > 0:
             # TODO: refactor
-            for j in range(0, len(crels[c]), 2):
-                addr = u16(crels[c][j : j + 2]) - 4  # -4 from header
+            for j in range(0, len(crels[code_resource]), 2):
+                addr = u16(crels[code_resource][j : j + 2]) - 4  # -4 from header
                 if addr & 0x1:
                     print("STRS patch ", end="")
                     base = strs_base
@@ -167,60 +178,60 @@ def dump_file_from_resources(rsrcs: ResourceFork, out_filename: str) -> None:
                 data = u32(segment_data[addr : addr + 4])
                 data2 = (data + base) & 0xFFFFFFFF
                 segment_data[addr : addr + 4] = to_u32(data2)
-                print(f"seg {c} addr {addr:04x} ({data:08x} -> {data2:08x})")
+                print(f"seg {code_resource} addr {addr:04x} ({data:08x} -> {data2:08x})")
         dump += bytes(segment_data)
 
-    # construct a5 world
-    a5_world = b"\x00" * 32  # TODO pointer to quickdraw global vars
+    # Construct A5 world (here really just the jumptable).
+    a5_world = b"\x00" * 32 # TODO: Account for QuickDraw global vars.
     for i in range(0x10, len(jumptable), 8):
-        # construct a5 jumptable (all loaded jumptable entries)
+        # Construct jumptable (all loaded jumptable entries).
         # See Inside Macintosh II-61 (The Segment Loader).
         entry = jumptable[i : i + 8]
         if entry[2:4] == b"\x3f\x3c":
-            """
-            unloaded jumptable entry structure:
-                XX XX: segment offset
-                3f 3c XX XX: move.w SEGMENT_NUMBER, -(SP)
-                    pushes SEGMENT_NUMBER onto the stack for _LoadSeg trap
-                a9 f0: _LoadSeg trap number
-            """
+            # Unloaded jumptable entry structure:
+            #    XX XX: segment offset
+            #    3f 3c XX XX: move.w SEGMENT_NUMBER, -(SP)
+            #        pushes SEGMENT_NUMBER onto the stack for _LoadSeg trap
+            #    a9 f0: _LoadSeg trap number
             segment_offset = u16(entry[:2])
             segment_num = u16(entry[4:6])
             if segment_num in segment_bases:
                 addr = segment_bases[segment_num] + segment_offset
             else:
-                print(
-                    f"WARNING: code segment {segment_num} not found for jumptable entry {(i-0x10)//8}, replacing with dummy address"
-                )
+                print(f"WARNING: Code segment {segment_num} not found for jumptable entry {(i-0x10)//8}, replacing with dummy address")
                 addr = DUMMY_ADDR
+
         elif entry[2:4] == b"\x4e\xed":
-            """
-            preloaded? jumptable entry structure:
-                XX XX: ???
-                4e ed XX XX: jmp OFFSET(a5)
-                4e 71: nop
-            """
+            # TODO: Get a source for this.
+            # Preloaded? jumptable entry structure:
+            #    XX XX: ???
+            #    4e ed XX XX: jmp OFFSET(a5)
+            #    4e 71: nop
             offset = u16(entry[4:6])
             segment_num = 0  # dummy
             addr = offset + a5
+
         else:
-            print(
-                f"WARNING: unknown format for jumptable entry {(i-0x10)//8}, replacing with dummy address"
-            )
+            print(f"WARNING: Unknown format for jumptable entry {(i-0x10)//8}, replacing with dummy address")
             segment_num = 0  # dummy
             addr = DUMMY_ADDR
+
+        # Create a LOADED jumptable entry.
         a5_world += to_u16(segment_num)
         a5_world += b"\x4e\xf9"  # jmp
         a5_world += to_u32(addr)
 
     below_a5_data = bytes(below_a5_size)
 
-    if b"ZERO" in rsrcs and b"DATA" in rsrcs:
-        data_rsrc = bytes(rsrcs[b"DATA"][0])
-        zero_rsrc = bytes(rsrcs[b"ZERO"][0])
+    # Applying DATA in this way ONLY works for binaries that don't do custom loading and compression
+    # of A5 world data (like CodeWarrior).
+    if b"ZERO" in resources and b"DATA" in resources:
+        data_rsrc = bytes(resources[b"DATA"][0])
+        zero_rsrc = bytes(resources[b"ZERO"][0])
         total_data_size = len(data_rsrc)
         for i in range(0, len(zero_rsrc), 2):
             total_data_size += u16(zero_rsrc[i : i + 2])
+
         if total_data_size <= below_a5_size:
             print("Adding DATA below A5 world")
             below_a5_data = bytearray()
@@ -232,7 +243,7 @@ def dump_file_from_resources(rsrcs: ResourceFork, out_filename: str) -> None:
                     zero_index += 2
 
             # TODO refactor
-            drel_rsrc = bytes(rsrcs[b"DREL"][0])
+            drel_rsrc = bytes(resources[b"DREL"][0])
             i = 0
             while i < len(drel_rsrc):
                 addr = i16(drel_rsrc[i : i + 2])
@@ -264,13 +275,13 @@ def dump_file_from_resources(rsrcs: ResourceFork, out_filename: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="Dump and preprocess M68K Macintosh code")
-    parser.add_argument("source", help="Source file (disk image or MacBinary file)")
-    parser.add_argument("target", help="Output file")
+    parser.add_argument("source_filepath", help="Source file (disk image or MacBinary file)")
+    parser.add_argument("dump_filepath")
     parser.add_argument("--path", help="For disk images, path in the image to read (e.g. \"dir1:dir2:file\")")
     args = parser.parse_args()
 
     path = args.path.split(":") if args.path else None
-    dump_file(args.source, args.target, path)
+    dump_file(args.source_filepath, args.dump_filepath, path)
 
 if __name__ == "__main__":
     main()
