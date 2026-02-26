@@ -29,10 +29,9 @@ public class M68kMacPropagateThunks extends GhidraScript {
             return;
         }
 
-        // Get the value of the A5 register.
-        // TODO: The THINK C dumper sets A5 to 0x904, but CodeWarrior can arbitrarily set A5.
-        // Right now, we just prompt for it - but later on we should automatically get it from somewhere.
-        Address a5 = askAddress("A5 Value", "Enter the A5 register value:");
+        // Get the value of the A5 register from the CurrentA5 global (0x904),
+        // which was written by the dumpers.
+        Address a5 = toAddr(getInt(toAddr(0x904)));
 
         // Rewrite the memory references.
         for (Function func : currentProgram.getFunctionManager().getFunctionsNoStubs(true)) {
