@@ -13,6 +13,9 @@ import collections
 
 ResourceFork = dict[bytes, dict[int, macresources.main.Resource]]
 
+# As described in the readme, "system RAM" in the dump is the low-memory region for 68k Mac OS system globals
+# (NOT part of an A5 world for any application). Since applications can directly read/write these system
+# globals for timing, memory info, etc., we need to be able to track these variables in Ghidra.
 SYSTEM_RAM_SIZE = 0x10000
 DUMMY_ADDR = 0xFFFFFFFF
 
@@ -108,7 +111,8 @@ def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None
     if b"STRS" in resources:
         a5 += len(resources[b"STRS"][0])
 
-    # CREATE THE HEADER.
+    # CREATE SYSTEM RAM (LOW MEMORY).
+    # Our custom dump header goes at the very start of system RAM.
     dump = b""
     header = (
         b"J\xffA\xffN\xffK\xff"  # put garbage so address 0 isn't recognized as a string
@@ -117,12 +121,8 @@ def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None
     # move.l #a5_value, a5
     # rts
     header += b"\x2a\x7c" + to_u32(a5) + b"\x4e\x75"
-
-    # CREATE SYSTEM RAM.
-    # The header goes at the very start of system RAM.
-    # TODO: Can we write the header any better? Maybe by changing the system RAM in-place?
     system_ram = bytearray(header + bytes(SYSTEM_RAM_SIZE - len(header)))
-    # The A5 world is hardcoded at this address.
+    # This app's A5 is stored in system global CurrentA5 (low memory 0x904).
     system_ram[0x904:0x908] = to_u32(a5)
     dump += system_ram
 
@@ -182,7 +182,8 @@ def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None
                 print(f"seg {code_resource} addr {addr:04x} ({data:08x} -> {data2:08x})")
         dump += bytes(segment_data)
 
-    # Construct A5 world (here really just the jumptable).
+    # Construct A5 world (application-level globals and jump table, SEPARATE from system RAM).
+    # A5 register points to the boundary between "below A5" and "above A5".
     a5_world = b"\x00" * 32 # TODO: Account for QuickDraw global vars.
     for i in range(0x10, len(jumptable), 8):
         # Construct jumptable (all loaded jumptable entries).

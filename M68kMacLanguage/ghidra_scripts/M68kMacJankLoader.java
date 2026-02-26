@@ -45,10 +45,10 @@ public class M68kMacJankLoader extends GhidraScript {
             createLabel(addr, name, true, SourceType.ANALYSIS);
         }
 
-        // Get the value of the A5 register.
-        // TODO: The THINK C dumper sets A5 to 0x904, but CodeWarrior can arbitrarily set A5.
-        // Right now, we just prompt for it - but later on we should automatically get it from somewhere.
-        Address a5 = askAddress("A5 Value", "Enter the A5 register value:");
+        // Get the value of the A5 register from the CurrentA5 global (0x904),
+        // which was written by the dumpers.
+        Address a5 = toAddr(getInt(toAddr(0x904)));
+        printf("A5 register loaded from CurrentA5 (0x904): 0x%x\n", a5.getOffset());
 
         Address jumptable_entry = a5.addNoWrap(0x20);
         // TODO: actually check the addresses
@@ -90,8 +90,7 @@ public class M68kMacJankLoader extends GhidraScript {
             addEntryPoint(startAddr);
         }
 
-        // Set value of A5 for the whole program.
-        // This is important to ensure all global data references in programs are resolved.
+        // Set value of A5 for the whole program. This is important to ensure all global data references can resolve.
         AddressSpace space = currentProgram.getAddressFactory().getDefaultAddressSpace();
         SetRegisterCmd cmd = new SetRegisterCmd(currentProgram.getLanguage().getRegister("A5"),
             space.getMinAddress(),
