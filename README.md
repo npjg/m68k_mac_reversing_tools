@@ -1,11 +1,6 @@
 # M68k Ghidra Mac Reversing Tools
-
-## Ghidra Instructions
-
 **Advantage(s)**: Syscalls are functions (so xrefs work), nicer handling of thunks
-
 **Disadvantage(s)**: Stack-based syscall arguments are ugly
-
 
 1. Make a dump using one of the [dumpers](dump/) corresponding to your compiler.
 2. Put the files in [ghidra/processor](ghidra/processor) in `$GHIDRA_INSTALL/Ghidra/Processors/68000/data/languages/`.
@@ -19,15 +14,3 @@
 * Create properly typed functions for `_*Dispatch`, `_Pack*` routines
 * Finish all syscalls
 * Direct loader for Ghidra from binhex/derez
-
-## Binary Ninja Instructions
-
-**WARNING**: Binary Ninja support is currently unmaintained in this fork, as I don't have Binary Ninja.
-
-**Advantage(s)**: Correct calling convention for syscalls, stack-based syscalls are nice
-
-**Disadvantage(s)**: Thunks in the jumptable don't automatically update name/function prototype
-
-1. Make a dump using [`dump/DumpGeneric68kCode.py`](dump/DumpGeneric68kCode.py).
-2. Add [binary_ninja/loader](binary_ninja/loader) and [https://github.com/ubuntor/binaryninja-m68k](https://github.com/ubuntor/binaryninja-m68k) to Binary Ninja plugins.
-3. Open the dump. The loader should run automatically and start disassembling.
