@@ -7,7 +7,7 @@
 **Disadvantage(s)**: Stack-based syscall arguments are ugly
 
 
-1. Make a dump using [`dump/DumpGeneric68kCode.py`](dump/DumpGeneric68kCode.py).
+1. Make a dump using one of the [dumpers](dump/) corresponding to your compiler.
 2. Put the files in [ghidra/processor](ghidra/processor) in `$GHIDRA_INSTALL/Ghidra/Processors/68000/data/languages/`.
 3. Put the files in [ghidra/data](ghidra/data) in `$GHIDRA_INSTALL/Ghidra/Features/Base/data/`.
 4. Add the scripts in [ghidra/scripts](ghidra/scripts) to Ghidra scripts. These will be in the `Analysis/M68k` category. (I just add the scripts directory where this repo is cloned to the Ghidra script manager.)
