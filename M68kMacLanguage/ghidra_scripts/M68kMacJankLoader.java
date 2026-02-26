@@ -30,7 +30,9 @@ public class M68kMacJankLoader extends GhidraScript {
             return;
         }
 
-        // Parse the system globals data file.
+        // Label the static system globals. The text file has a format like:
+        //  0x011C, UTableBase
+        // So we just label those at the addresses where they should be.
         ResourceFile rFile = Application.findDataFileInAnyModule("m68k_mac_system_globals");
         if (rFile == null) {
             popup("Could not find m68k Mac system globals file");
@@ -89,13 +91,5 @@ public class M68kMacJankLoader extends GhidraScript {
         } else {
             addEntryPoint(startAddr);
         }
-
-        // Set value of A5 for the whole program. This is important to ensure all global data references can resolve.
-        AddressSpace space = currentProgram.getAddressFactory().getDefaultAddressSpace();
-        SetRegisterCmd cmd = new SetRegisterCmd(currentProgram.getLanguage().getRegister("A5"),
-            space.getMinAddress(),
-            space.getMaxAddress(),
-            a5.getOffsetAsBigInteger());
-        cmd.applyTo(currentProgram);
     }
 }

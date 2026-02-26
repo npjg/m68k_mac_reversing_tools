@@ -1,0 +1,10 @@
+<patternconstraints>
+  <language id="68000:BE:32:mac">
+  <!-- Ghidra's patternconstraints.xml doesn't seem support merging/amending patterns. It only
+      seems to allow one pattern file per language constraint, so it tries to overwrite instead of merge.
+      This leads to a weird error: Attempted to overwrite property value for patternfile in contraint node: /languageID = 68000:BE:*:*.
+      So we instead provide a constraint ONLY for the Mac variant provided by this extension.
+  -->
+    <patternfile>68000_mac_patterns.xml</patternfile>
+  </language>
+</patternconstraints>

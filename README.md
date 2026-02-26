@@ -1,9 +1,19 @@
 # M68k Ghidra Mac Reversing Tools
 **Advantage(s)**: Syscalls are functions (so xrefs work), nicer handling of thunks
+
 **Disadvantage(s)**: Stack-based syscall arguments are ugly
 
 1. Make a dump using one of the [dumpers](dump/) corresponding to your compiler.
 2. Install the `M68kMacLanguage` Ghidra extension provided in this repo.
+
+   1. Build the extension with `build.sh` in the extension directory.
+   2. In the main Ghidra Project window (NOT CodeBrowser), go to:
+      File > Configure > Install Extensions...
+   3. Check the box next to 'M68kMacLanguage' and click OK.
+   4. Restart Ghidra.
+
+   Alternatively, you can use `quickInstall.sh` for a more development-friendly install.
+
 3. Open the dump as processor `68000`, variant `Mac`, and the compiler of your choice.
 4. Run the `RunAllM68kMacAnalysis.java` script (or its constituents).
 
@@ -61,18 +71,8 @@ The dumpers are conceptually very simple - they first create a low-memory region
                 └─────────────────────────────────────┘
 ```
 
-# Installation Insructions
-To install the Ghidra extension that includes the custom compiler definitions:
-1. Build the extension with `build.sh` in the extension directory.
-2. In the main Ghidra Project window (NOT CodeBrowser), go to:
-   File > Configure > Install Extensions..."
-3. Check the box next to 'M68kMacLanguage' and click OK
-4. Restart Ghidra
-
-After installation, you should be able to select 68000 (Mac) as the language when importing.
-
-Currently, analysis scripts are still just Ghidra scripts, they are not proper analyzers. This is
-to simplify development, but these SHOULD be actual analyzers later.
+# Resources
+ - [RetroGhidra](https://github.com/hippietrail/RetroGhidra/tree/main) has a [resource fork loader](https://github.com/hippietrail/RetroGhidra/blob/main/src/main/java/retro/ClassicMacResourceForkLoader.java), but it does not construct the A5 world at all. This is a deal-breaker for code that relies heavily on global data.
 
 ## TODO
 * Finish creating properly typed functions for `_FP68K` routines
