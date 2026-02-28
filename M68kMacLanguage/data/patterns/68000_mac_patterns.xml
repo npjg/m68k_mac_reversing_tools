@@ -10,10 +10,6 @@
       <data>0x4e 0x5e 0x4e 0x75</data>            <!-- unlk A6; ret -->
       <data>0x4e 0x5e 0x4e 0x75 0x4e 0x71 </data> <!-- unlk A6; ret; padding -->
       <data>0x4e 0x5e 0x4e 0x75 0x00 0x00 </data> <!-- unlk A6; ret; padding -->
-      <!-- START CUSTOM PATTERNS. The current Ghidra 68k patterns do NOT detect functions where there are MacsBug-style symbols
-          interspersed between functions, so the following pre-patterns are added to detect patterns after symbols. -->
-      <data>0x00 0x00</data>            <!-- zero padding (after symbol) -->
-      <!-- END CUSTOM PATTERNS. -->
     </prepatterns>
     <postpatterns>
       <data>01001111 11101111 1111.... .......0 </data>   <!-- lea (-imm,SP),SP) -->
@@ -39,6 +35,35 @@
       <data>01001111 11101111 1111.... .......0 </data>   <!-- lea (-imm,SP),SP) -->
       <data>0x4e 0x56 0x00 0x00 </data>                   <!-- link.w A6, 0 -->
       <data>0x4e 0x56 1111.... .......0 </data>           <!-- link.w A6, -imm -->
+      <funcstart/>
+    </postpatterns>
+  </patternpairs>
+
+  <patternpairs totalbits="32" postbits="32">
+  <!-- The current 68k patterns do NOT detect functions where there are MacsBug-style symbols interspersed between
+      functions, so the following patterns detect Mac function starts after padding of zeroes. Note that we couldn't
+      just set a pre-pattern of 0x00 0x00 above, because functions that start like the following would incorrectly split
+      after the first instruction:
+            4e 56 00 00     link.w     A6,0x0
+            48 e7 03 18     movem.l    {  A4 A3 D7 D6},-(SP)
+      So we use longer patterns for function starts in this case.
+      It would probably be better to have a custom analyzer to find the function bounds and get the symbols at the same time.
+    -->
+    <prepatterns>
+      <data>0x00 0x00 </data>
+    </prepatterns>
+    <postpatterns>
+      <data>0x4e 0x56 0x00 0x00 0x48 0xe7 ........ ........ </data>          <!-- link.w A6, 0; movem.l {regs}, -(SP) -->
+      <data>0x4e 0x56 0x00 0x00 0x2f 0x02 </data>  <!-- link.w A6, 0; move.l D2,-SP -->
+      <data>0x4e 0x56 0x00 0x00 0x2f 0x03 </data>  <!-- link.w A6, 0; move.l D3,-SP -->
+      <data>0x4e 0x56 0x00 0x00 0x2f 0x0a </data>  <!-- link.w A6, 0; move.l A2,-SP -->
+      <data>0x4e 0x56 0x00 0x00 0x2f 0x0b </data>  <!-- link.w A6, 0; move.l A3,-SP -->
+
+      <data>0x4e 0x56 1111.... .......0 0x48 0xe7 </data>           <!-- link.w A6, -imm; movem.l {regs}, -(SP) -->
+      <data>0x4e 0x56 1111.... .......0 0x2f 0x02 </data>  <!-- link.w A6, -imm; move.l D2,-SP -->
+      <data>0x4e 0x56 1111.... .......0 0x2f 0x03 </data>  <!-- link.w A6, -imm; move.l D3,-SP -->
+      <data>0x4e 0x56 1111.... .......0 0x2f 0x0a </data>  <!-- link.w A6, -imm; move.l A2,-SP -->
+      <data>0x4e 0x56 1111.... .......0 0x2f 0x0b </data>  <!-- link.w A6, -imm; move.l A3,-SP -->
       <funcstart/>
     </postpatterns>
   </patternpairs>
