@@ -35,7 +35,12 @@ public class M68kMacSymbols extends GhidraScript {
                 for (byte[] ending : ENDINGS) {
                     byte[] instructionBytes = inst.getBytes();
                     if (Arrays.equals(ending, Arrays.copyOfRange(instructionBytes, 0, 2))) { // take first 2 bytes only
+                        // Ensure the symbol address exists in memory.
                         Address symbolAddr = inst.getAddress().addNoWrap(instructionBytes.length);
+                        if (!currentProgram.getMemory().contains(symbolAddr)) {
+                            continue; // Symbol address not in memory
+                        }
+
                         int length = getByte(symbolAddr) & 0xff;
                         symbolAddr = symbolAddr.addNoWrap(1);
                         if (length == 0x80) {
