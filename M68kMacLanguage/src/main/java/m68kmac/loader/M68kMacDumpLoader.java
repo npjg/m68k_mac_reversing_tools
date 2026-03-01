@@ -67,9 +67,11 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
         }
 
         if (isValidDump) {
-            // Add 68000 language spec.
+            // Add our custom language specs with both compiler variants.
             loadSpecs.add(new LoadSpec(this, 0,
                 new LanguageCompilerSpecPair("68000:BE:32:mac", "default"), true));
+            loadSpecs.add(new LoadSpec(this, 0,
+                new LanguageCompilerSpecPair("68000:BE:32:mac", "codewarrior"), true));
         }
 
         return loadSpecs;
