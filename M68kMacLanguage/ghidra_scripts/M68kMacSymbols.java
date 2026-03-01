@@ -9,7 +9,8 @@ import ghidra.program.model.address.*;
 import ghidra.program.model.data.*;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.symbol.*;
-import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.mem.*;
+import m68kmac.datatypes.MacsBugSymbolDataType;
 
 public class M68kMacSymbols extends GhidraScript {
 
@@ -35,76 +36,51 @@ public class M68kMacSymbols extends GhidraScript {
                 for (byte[] ending : ENDINGS) {
                     byte[] instructionBytes = inst.getBytes();
                     if (Arrays.equals(ending, Arrays.copyOfRange(instructionBytes, 0, 2))) { // take first 2 bytes only
-                        // Ensure the symbol address exists in memory.
-                        Address symbolAddr = inst.getAddress().addNoWrap(instructionBytes.length);
-                        if (!currentProgram.getMemory().contains(symbolAddr)) {
-                            continue; // Symbol address not in memory
-                        }
+                        // locate MacsBug symbol immediately after return instruction.
+                        Address macsBugSymbolStart = inst.getAddress().addNoWrap(instructionBytes.length);
 
-                        int length = getByte(symbolAddr) & 0xff;
-                        symbolAddr = symbolAddr.addNoWrap(1);
-                        if (length == 0x80) {
-                            // With a variable-length format, the first byte is in the range $80 to $9F.
-                            // Stripping the high-order bit produces a length in the range $00 through $1F.
-                            // If the length is zero, the next byte contains the actual length, in the range
-                            // $01 through $FF.
-                            //
-                            // So since we added one to the symbol address already, we are getting the NEXT byte.
-                            // So this is the length byte right here, and we want to read past it.
-                            length = getByte(symbolAddr) & 0xff;
-                            symbolAddr = symbolAddr.addNoWrap(1);
+                        // Create MacsBug symbol data type at this location.
+                        DataTypeManager dtm = currentProgram.getDataTypeManager();
+                        MacsBugSymbolDataType macsBugSymbolDt = new MacsBugSymbolDataType(dtm);
+                        Listing listing = currentProgram.getListing();
 
-                        } else if (length > 0x80) {
-                            length -= 0x80;
+                        try {
+                            // Check if there's already an instruction at this location - skip if so.
+                            // This prevents clearing already-disassembled functions.
+                            Instruction existingInst = listing.getInstructionAt(macsBugSymbolStart);
+                            if (existingInst != null) {
+                                continue;  // Skip - there's already code here
+                            }
 
-                        } else {
-                            // TODO: 16 byte fixed length symbols
-                            // With fixed-length format, the first byte is in the range $20 through $7F.
-                            // The high-order bit may or may not be set. The high-order bit of the second
-                            // byte is set for 16-character names, clear for 8-character names. Fixed-length
-                            // 16-character names are used in object Pascal to show class.method names instead
-                            // of procedure names. The method name is contained in the first 8 bytes and the
-                            // class name is in the second 8 bytes. MacsBug swaps the order and inserts the period
-                            // before displaying the name.
-                            length = 8;
-                            symbolAddr = symbolAddr.addNoWrap(-1);
-                        }
+                            // CALCULATE the expected length using the data type's own method.
+                            MemBuffer buffer = new MemoryBufferImpl(currentProgram.getMemory(), macsBugSymbolStart);
+                            int symbolTotalLength = macsBugSymbolDt.getLength(buffer);
+                            if (symbolTotalLength <= 0) {
+                                continue;  // Invalid symbol format - skip
+                            }
 
-                        byte[] symbolBytes = getBytes(symbolAddr, length);
-                        if (length > 0) {
-                            boolean goodSymbol = true;
-                            for (int i = 0; i < symbolBytes.length; i++) {
-                                int val = symbolBytes[i] & 0xff;
-                                if (val < 32 || val > 126) {
-                                    // Last char might be unprintable (Symantec C++ bug), omit it
-                                    if (i == symbolBytes.length - 1) {
-                                        length--;
-                                    } else {
-                                        goodSymbol = false;
-                                    }
-                                    break;
+                            // CLEAR existing data in the range where the symbol will be placed.
+                            // This prevents conflicts with existing data types.
+                            Address symbolEnd = macsBugSymbolStart.addNoWrap(symbolTotalLength - 1);
+                            listing.clearCodeUnits(macsBugSymbolStart, symbolEnd, false);
+
+                            // Create the MacsBug symbol data type.
+                            Data symbolData = listing.createData(macsBugSymbolStart, macsBugSymbolDt);
+
+                            if (symbolData != null) {
+                                // EXTRACT symbol name from the data type's value.
+                                Object symbolValue = symbolData.getValue();
+                                if (symbolValue instanceof String) {
+                                    String symbolName = (String) symbolValue;
+                                    symbolName = symbolName.replace(" ", "_");
+                                    func.setName(symbolName, SourceType.ANALYSIS);
+                                    printf("Applied MacsBug symbol '%s' to function at %s\n",
+                                        symbolName, func.getEntryPoint());
                                 }
                             }
-
-                            if (goodSymbol) {
-                                String symbol = new String(getBytes(symbolAddr, length));
-                                symbol = symbol.replace(" ", "_");
-                                func.setName(symbol, SourceType.ANALYSIS);
-
-                                // Create string data at the symbol location.
-                                // TODO: Put the control bytes and such too into a structure
-                                // so it reads more nicely in the disasm.
-                                DataTypeManager dtm = currentProgram.getDataTypeManager();
-                                StringDataType stringDt = new StringDataType(dtm);
-                                Listing listing = currentProgram.getListing();
-
-                                // Undefine any existing data in the range to recreate it.
-                                Address endAddr = symbolAddr.add(length - 1);
-                                listing.clearCodeUnits(symbolAddr, endAddr, false);
-
-                                // Create the string data type.
-                                listing.createData(symbolAddr, stringDt, length);
-                            }
+                        } catch (Exception e) {
+                            printf("Failed to create MacsBug symbol at %s: %s\n",
+                                macsBugSymbolStart, e.getMessage());
                         }
                     }
                 }
