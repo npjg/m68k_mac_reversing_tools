@@ -14,11 +14,11 @@ import ghidra.program.model.mem.MemoryAccessException;
  *
  * Format:
  * - First byte is length indicator:
- *   - 0x80: Extended format - next byte contains actual length (1-255)
- *   - 0x81-0x9F: Variable length format - subtract 0x80 to get length (1-31)
- *   - 0x20-0x7F: Fixed-length format (8 or 16 bytes, currently only 8-byte supported)
- * - Symbol name bytes (variable length)
- * - Optional padding to 4-byte boundary (longword alignment)
+ *   - 0x80: Extended format - next byte contains actual length (1-255).
+ *   - 0x81-0x9F: Variable length format - subtract 0x80 to get length (1-31).
+ *   - 0x20-0x7F: Fixed-length format (8 or 16 bytes, currently only 8-byte supported).
+ * - Symbol name bytes (variable length).
+ * - Optional padding to 4-byte boundary (longword alignment).
  */
 public class MacsBugSymbolDataType extends DynamicDataType {
 
@@ -57,16 +57,8 @@ public class MacsBugSymbolDataType extends DynamicDataType {
     }
 
     @Override
-    public DataType clone(DataTypeManager dtm) {
-        if (dtm == getDataTypeManager()) {
-            return this;
-        }
-        return new MacsBugSymbolDataType(dtm);
-    }
-
-    @Override
     public String getDescription() {
-        return "MacsBug debug symbol";
+        return "MacsBug Debug Symbol";
     }
 
     @Override
@@ -75,14 +67,22 @@ public class MacsBugSymbolDataType extends DynamicDataType {
     }
 
     @Override
+    public DataType clone(DataTypeManager dtm) {
+        if (dtm == getDataTypeManager()) {
+            return this;
+        }
+        return new MacsBugSymbolDataType(dtm);
+    }
+
+    @Override
     protected DataTypeComponent[] getAllComponents(MemBuffer buffer) {
-        // PARSE the symbol format using the shared parser.
+        // Parse the symbol format.
         SymbolInfo info = parseSymbolInfo(buffer);
         if (info == null) {
             return null;
         }
 
-        // BUILD component array based on the format type.
+        // Build component array based on the format type.
         java.util.List<DataTypeComponent> components = new java.util.ArrayList<>();
         int componentOrdinal = 0;
 
@@ -96,7 +96,7 @@ public class MacsBugSymbolDataType extends DynamicDataType {
             components.add(new ReadOnlyDataTypeComponent(
                 ByteDataType.dataType, this, 1, componentOrdinal++, 0, "length_byte", null));
         }
-        // FIXED format has no length-encoding bytes
+        // The FIXED format has no length-encoding bytes.
 
         // Add symbol name component.
         if (info.symbolLength > 0) {
@@ -150,8 +150,6 @@ public class MacsBugSymbolDataType extends DynamicDataType {
     /**
      * Parse MacsBug symbol format and calculate lengths.
      *
-     * This is the single source of truth for MacsBug symbol format parsing.
-     *
      * @param buffer The memory buffer containing the MacsBug symbol
      * @return SymbolInfo with parsed details, or null if invalid format
      */
@@ -165,14 +163,14 @@ public class MacsBugSymbolDataType extends DynamicDataType {
             int symbolOffset;
 
             if (lengthIndicator == 0x80) {
-                // EXTENDED FORMAT: first byte is 0x80, next byte contains actual length.
+                // EXTENDED FORMAT. First byte is 0x80, next byte contains actual length.
                 formatType = FormatType.EXTENDED;
                 offset++;
                 symbolLength = buffer.getByte(offset) & 0xFF;
                 offset++;
                 symbolOffset = offset;
             } else if (lengthIndicator > 0x80 && lengthIndicator <= 0x9F) {
-                // VARIABLE LENGTH FORMAT: subtract 0x80 to get length.
+                // VARIABLE LENGTH FORMAT. Subtract 0x80 to get length.
                 formatType = FormatType.VARIABLE;
                 symbolLength = lengthIndicator - 0x80;
                 offset++;
@@ -181,13 +179,13 @@ public class MacsBugSymbolDataType extends DynamicDataType {
                 // FIXED LENGTH FORMAT: 8 bytes (first byte is part of symbol name).
                 formatType = FormatType.FIXED;
                 symbolLength = 8;
-                symbolOffset = offset;  // First byte is part of symbol
+                symbolOffset = offset;  // First byte is part of symbol.
             } else {
                 // Invalid length indicator.
                 return null;
             }
 
-            // VERIFY symbol contains printable ASCII characters.
+            // Verify symbol contains printable ASCII characters.
             for (int i = 0; i < symbolLength; i++) {
                 int charValue = buffer.getByte(symbolOffset + i) & 0xFF;
                 if (charValue < 32 || charValue > 126) {
@@ -202,7 +200,7 @@ public class MacsBugSymbolDataType extends DynamicDataType {
                 }
             }
 
-            // CALCULATE total length with padding to 4-byte boundary (longword alignment).
+            // Calculate total length with padding to 4-byte boundary (longword alignment).
             int unpaddedLength = symbolOffset + symbolLength;
             int totalLength = ((unpaddedLength + 3) / 4) * 4;  // Round up to next multiple of 4
 

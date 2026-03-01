@@ -30,57 +30,58 @@ public class M68kMacSymbols extends GhidraScript {
             return;
         }
 
-        // Get symbol as described in MacsBug Reference and Debugging Guide, Appendix D (Procedure Names).
+        // Search each function and instruction for the ending patterns.
         for (Function func : currentProgram.getFunctionManager().getFunctionsNoStubs(true)) {
             for (Instruction inst : currentProgram.getListing().getInstructions(func.getBody(), true)) {
                 for (byte[] ending : ENDINGS) {
                     byte[] instructionBytes = inst.getBytes();
-                    if (Arrays.equals(ending, Arrays.copyOfRange(instructionBytes, 0, 2))) { // take first 2 bytes only
-                        // locate MacsBug symbol immediately after return instruction.
+                    // Take first 2 bytes of instruction only (because that is what our ending instruction patterns are).
+                    byte[] firstTwoInstructionBytes = Arrays.copyOfRange(instructionBytes, 0, 2);
+                    if (Arrays.equals(ending, firstTwoInstructionBytes)) {
+                        // Locate MacsBug symbol immediately after return instruction.
                         Address macsBugSymbolStart = inst.getAddress().addNoWrap(instructionBytes.length);
 
                         // Create MacsBug symbol data type at this location.
                         DataTypeManager dtm = currentProgram.getDataTypeManager();
                         MacsBugSymbolDataType macsBugSymbolDt = new MacsBugSymbolDataType(dtm);
                         Listing listing = currentProgram.getListing();
-
                         try {
                             // Check if there's already an instruction at this location - skip if so.
                             // This prevents clearing already-disassembled functions.
                             Instruction existingInst = listing.getInstructionAt(macsBugSymbolStart);
                             if (existingInst != null) {
-                                continue;  // Skip - there's already code here
+                                // Skip - there's already code here. We expect this to happen when there aren't actually
+                                // symbols between functions.
+                                printf("INFO: Expected MacsBug symbol at %s but found code: %s\n", macsBugSymbolStart, existingInst.toString());
+                                continue;
                             }
 
-                            // CALCULATE the expected length using the data type's own method.
+                            // Calculate the expected symbol length.
                             MemBuffer buffer = new MemoryBufferImpl(currentProgram.getMemory(), macsBugSymbolStart);
                             int symbolTotalLength = macsBugSymbolDt.getLength(buffer);
                             if (symbolTotalLength <= 0) {
                                 continue;  // Invalid symbol format - skip
                             }
 
-                            // CLEAR existing data in the range where the symbol will be placed.
-                            // This prevents conflicts with existing data types.
+                            // Clear existing data in the range where the symbol will be placed.
+                            // This prevents conflicts with existing data types, namely auto-detected strings.
                             Address symbolEnd = macsBugSymbolStart.addNoWrap(symbolTotalLength - 1);
                             listing.clearCodeUnits(macsBugSymbolStart, symbolEnd, false);
 
                             // Create the MacsBug symbol data type.
                             Data symbolData = listing.createData(macsBugSymbolStart, macsBugSymbolDt);
-
                             if (symbolData != null) {
-                                // EXTRACT symbol name from the data type's value.
+                                // Extract symbol name from the data type's value.
                                 Object symbolValue = symbolData.getValue();
                                 if (symbolValue instanceof String) {
                                     String symbolName = (String) symbolValue;
                                     symbolName = symbolName.replace(" ", "_");
                                     func.setName(symbolName, SourceType.ANALYSIS);
-                                    printf("Applied MacsBug symbol '%s' to function at %s\n",
-                                        symbolName, func.getEntryPoint());
+                                    printf("MacsBug symbol: %s (%s)\n", symbolName, func.getEntryPoint());
                                 }
                             }
                         } catch (Exception e) {
-                            printf("Failed to create MacsBug symbol at %s: %s\n",
-                                macsBugSymbolStart, e.getMessage());
+                            printf("WARNING: Failed to create MacsBug symbol at %s: %s\n", macsBugSymbolStart, e.getMessage());
                         }
                     }
                 }
