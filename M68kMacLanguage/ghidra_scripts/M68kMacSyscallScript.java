@@ -11,6 +11,7 @@ import ghidra.app.services.DataTypeManagerService;
 import ghidra.framework.Application;
 import ghidra.program.model.address.*;
 import ghidra.program.model.data.*;
+import ghidra.program.model.data.UnsignedShortDataType;
 import ghidra.program.model.lang.BasicCompilerSpec;
 import ghidra.program.model.lang.SpaceNames;
 import ghidra.program.model.lang.Register;
@@ -130,9 +131,11 @@ public class M68kMacSyscallScript extends GhidraScript {
             String syscallName = "syscall_"+String.format("%08X", offset);
             String[] syscallData = null;
             AddressSpace targetSpace = syscallSpace;
+            boolean isFP68K = false;
 
             // Check if this is a _FP68K syscall
             if (offset == FP68K_SYSCALL) {
+                isFP68K = true;
                 Long selector = fp68kSelectors.get(callSite);
                 if (selector != null) {
                     // Use the FP68K address space and selector as offset
@@ -196,7 +199,8 @@ public class M68kMacSyscallScript extends GhidraScript {
             if (callee == null) {
                 callee = createFunction(callTarget, syscallName);
             }
-            callee.setCallingConvention(callingConvention);
+            // Set calling convention: __stdcall for FP68K, syscall for regular syscalls
+            callee.setCallingConvention(isFP68K ? "__stdcall" : callingConvention);
 
             try {
                 ArrayList<ParameterImpl> params = new ArrayList();
@@ -295,8 +299,19 @@ public class M68kMacSyscallScript extends GhidraScript {
                 dt = datatypes[0];
             }
             return dt;
+        } else if (s.equals("pointer")) {
+            // Generic pointer type for FP68K parameters
+            return new PointerDataType(dtm);
+        } else if (s.equals("word")) {
+            // 16-bit unsigned integer (opword selector)
+            return new UnsignedShortDataType(dtm);
         } else {
-            return dtm.getDataType("/"+s);
+            DataType dt = dtm.getDataType("/"+s);
+            if (dt == null) {
+                printf("Warning: Could not resolve data type '%s', using default pointer\n", s);
+                return new PointerDataType(dtm);
+            }
+            return dt;
         }
     }
 

@@ -2,15 +2,15 @@
 
 <!--
 KNOWN LIMITATIONS:
- - Doubles are decompiled as two 4-byte accesses (e.g., value._0_4_ and value._4_4_) even when correctly
-   typed as double. This is a fundamental Ghidra limitation on 32-bit architectures - since M68k has no
-   native 64-bit move instruction, doubles are physically moved as two 32-bit operations, and the
-   decompiler accurately reflects this assembly-level reality. Cannot be fixed via cspec alone.
+ - Doubles with software floating point are decompiled as two 4-byte accesses (e.g., value._0_4_ and value._4_4_)
+    even when correctly typed as double. This is a fundamental Ghidra limitation on 32-bit architectures - since M68k
+    has no native 64-bit move instruction, doubles are physically moved as two 32-bit operations, and the decompiler
+    accurately reflects this assembly-level reality. Cannot be fixed via cspec alone. The included double68k type
+    ameliorates this somewhat by cleaning up the decompiler view.
 
 TODO:
  - When parameters are passed on the stack, variable sizes of 2 bytes (without padding to 4 bytes) happen
    totally acceptable; currently, Ghidra tries to force all stack parameters to 4 bytes, which messes up the stack.
- - Functions returning pointers in A0 are not detected.
 -->
 
 <compiler_spec>
