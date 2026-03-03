@@ -29,6 +29,7 @@ import ghidra.util.task.TaskMonitor;
 public class M68kMacSyscallScript extends GhidraScript {
     private static final String SYSCALL_SPACE_NAME = "syscall";
     private static final int SYSCALL_SPACE_LENGTH = 0x10000;
+
     private static final String FP68K_SPACE_NAME = "fp68k";
     private static final int FP68K_SPACE_LENGTH = 0x10000;
 
@@ -55,69 +56,32 @@ public class M68kMacSyscallScript extends GhidraScript {
             return;
         }
 
-        // Get the space where the syscalls (non-FP68K) live. If it doesn't exist, create it.
-        AddressSpace syscallSpace =
-            currentProgram.getAddressFactory().getAddressSpace(SYSCALL_SPACE_NAME);
+        // Get the space where the syscalls (and FP68k selectors) live. If they don't exist, create them.
+        AddressSpace syscallSpace = getOrCreateAddressSpace(SYSCALL_SPACE_NAME, SYSCALL_SPACE_LENGTH);
         if (syscallSpace == null) {
-            // Don't muck with address spaces if we don't have exclusive access to the program.
-            if (!currentProgram.hasExclusiveAccess()) {
-                popup("Must have exclusive access to " + currentProgram.getName() + " to run this script");
-                return;
-            }
-            Address startAddr = currentProgram.getAddressFactory().getAddressSpace(
-                SpaceNames.OTHER_SPACE_NAME).getAddress(0x0L);
-            AddUninitializedMemoryBlockCmd cmd = new AddUninitializedMemoryBlockCmd(
-                SYSCALL_SPACE_NAME, null, this.getClass().getName(), startAddr,
-                SYSCALL_SPACE_LENGTH, true, true, true, false, true);
-            if (!cmd.applyTo(currentProgram)) {
-                popup("Failed to create " + SYSCALL_SPACE_NAME);
-                return;
-            }
-            syscallSpace = currentProgram.getAddressFactory().getAddressSpace(SYSCALL_SPACE_NAME);
+            return;
         }
-        else {
-            printf("AddressSpace %s found, continuing...\n", SYSCALL_SPACE_NAME);
-        }
-
-        // Get the space where FP68K traps live. If it doesn't exist, create it.
-        AddressSpace fp68kSpace =
-            currentProgram.getAddressFactory().getAddressSpace(FP68K_SPACE_NAME);
+        AddressSpace fp68kSpace = getOrCreateAddressSpace(FP68K_SPACE_NAME, FP68K_SPACE_LENGTH);
         if (fp68kSpace == null) {
-            if (!currentProgram.hasExclusiveAccess()) {
-                popup("Must have exclusive access to " + currentProgram.getName() + " to run this script");
-                return;
-            }
-            Address startAddr = currentProgram.getAddressFactory().getAddressSpace(
-                SpaceNames.OTHER_SPACE_NAME).getAddress(0x0L);
-            AddUninitializedMemoryBlockCmd cmd = new AddUninitializedMemoryBlockCmd(
-                FP68K_SPACE_NAME, null, this.getClass().getName(), startAddr,
-                FP68K_SPACE_LENGTH, true, true, true, false, true);
-            if (!cmd.applyTo(currentProgram)) {
-                popup("Failed to create " + FP68K_SPACE_NAME);
-                return;
-            }
-            fp68kSpace = currentProgram.getAddressFactory().getAddressSpace(FP68K_SPACE_NAME);
-        }
-        else {
-            printf("AddressSpace %s found, continuing...\n", FP68K_SPACE_NAME);
+            return;
         }
 
         // Get all of the functions that contain system calls.
         // Note that this will not find system call instructions that are not in defined functions.
         Map<Function, Map<Address, Long>> funcsToSyscalls = getSyscallsInFunctions(currentProgram, monitor);
         if (funcsToSyscalls.isEmpty()) {
-            popup("No system calls found (within defined functions)");
+            popup("No system calls found within defined functions. Maybe analysis needs to be run first?");
             return;
         }
 
-        //get the map from system call numbers to system call names
+        // Get the map from system call numbers to system call names.
         Map<Long, String> syscallNumberToData = getSyscallNumberMap();
         Map<Long, String> fp68kSelectorToData = getFP68KSelectorMap();
 
-        // Resolve FP68K selectors using symbolic propagation
+        // Resolve FP68K selectors using symbolic propagation.
         Map<Address, Long> fp68kSelectors = resolveFP68KSelectors(funcsToSyscalls, currentProgram, monitor);
 
-        // Flatten the map for easier processing
+        // Flatten the map for easier processing.
         Map<Address, Long> addressesToSyscalls = new HashMap<>();
         for (Map<Address, Long> syscallMap : funcsToSyscalls.values()) {
             addressesToSyscalls.putAll(syscallMap);
@@ -283,6 +247,37 @@ public class M68kMacSyscallScript extends GhidraScript {
             //overriding references must be primary to be active
             currentProgram.getReferenceManager().setPrimary(ref, true);
         }
+    }
+
+    /**
+     * Gets or creates an address space with the specified name and length.
+     * @param spaceName name of the address space
+     * @param spaceLength length of the address space
+     * @return the address space, or null if it couldn't be created
+     */
+    private AddressSpace getOrCreateAddressSpace(String spaceName, int spaceLength) {
+        AddressSpace addressSpace = currentProgram.getAddressFactory().getAddressSpace(spaceName);
+        if (addressSpace == null) {
+            // Don't muck with address spaces if we don't have exclusive access to the program.
+            if (!currentProgram.hasExclusiveAccess()) {
+                popup("Must have exclusive access to " + currentProgram.getName() + " to run this script");
+                return null;
+            }
+            Address startAddr = currentProgram.getAddressFactory().getAddressSpace(
+                SpaceNames.OTHER_SPACE_NAME).getAddress(0x0L);
+            AddUninitializedMemoryBlockCmd cmd = new AddUninitializedMemoryBlockCmd(
+                spaceName, null, this.getClass().getName(), startAddr,
+                spaceLength, true, true, true, false, true);
+            if (!cmd.applyTo(currentProgram)) {
+                popup("Failed to create " + spaceName);
+                return null;
+            }
+            addressSpace = currentProgram.getAddressFactory().getAddressSpace(spaceName);
+        }
+        else {
+            printf("AddressSpace %s found, continuing...\n", spaceName);
+        }
+        return addressSpace;
     }
 
     private DataType parseType(DataTypeManager dtm, String s) {
