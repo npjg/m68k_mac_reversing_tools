@@ -3,6 +3,7 @@
 usage() {
     cat << EOF
 Usage: $0 [GHIDRA_INSTALL_DIR] [GHIDRA_DIRECT_EXTENSION_INSTALLATION_DIR]
+       $0 [--no-kill] [GHIDRA_INSTALL_DIR] [GHIDRA_DIRECT_EXTENSION_INSTALLATION_DIR]
 
 Rebuild the Ghidra extension, extract it to replace a currently-installed version, and restart Ghidra.
 
@@ -11,6 +12,7 @@ Even when you're using Eclipse and GhidraDev, Ghidra doesn't seem to provide a w
 extensions (but maybe I just didn't try hard enough).
 
 Arguments:
+  --no-kill             Skip force-killing running Ghidra processes.
   GHIDRA_INSTALL_DIR    Path to Ghidra installation directory
                         (can also be provided by exported GHIDRA_INSTALL_DIR environment variable)
   GHIDRA_DIRECT_EXTENSION_INSTALLATION_DIR   Path to Ghidra user extensions directory
@@ -26,24 +28,47 @@ EOF
 set -euo pipefail
 
 # PARSE COMMAND-LINE ARGUMENTS.
-if [[ $# -gt 0 ]]; then
+NO_KILL=0
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)
             usage
             ;;
+        --no-kill)
+            NO_KILL=1
+            shift
+            ;;
+        --)
+            shift
+            while [[ $# -gt 0 ]]; do
+                POSITIONAL+=("$1")
+                shift
+            done
+            ;;
+        -*)
+            echo "ERROR: Unknown option: $1"
+            echo ""
+            usage
+            ;;
         *)
-            GHIDRA_INSTALL_DIR="$1"
+            POSITIONAL+=("$1")
+            shift
             ;;
     esac
+done
+
+if [[ ${#POSITIONAL[@]} -gt 0 ]]; then
+    GHIDRA_INSTALL_DIR="${POSITIONAL[0]}"
 fi
 
-if [[ $# -gt 1 ]]; then
-    GHIDRA_DIRECT_EXTENSION_INSTALLATION_DIR="$2"
+if [[ ${#POSITIONAL[@]} -gt 1 ]]; then
+    GHIDRA_DIRECT_EXTENSION_INSTALLATION_DIR="${POSITIONAL[1]}"
 fi
 
 # VALIDATE THE GHIDRA INSTALLATION DIRECTORY.
 if [[ -z "${GHIDRA_INSTALL_DIR:-}" || ! -d "$GHIDRA_INSTALL_DIR" ]]; then
-    echo "ERROR: GHIDRA_INSTALL_DIR not set or directory not found"
+    echo "ERROR: GHIDRA_INSTALL_DIR not set or directory not found: ${GHIDRA_INSTALL_DIR:-}"
     echo ""
     usage
 fi
@@ -53,7 +78,7 @@ echo ""
 
 # VALIDATE THE GHIDRA EXTENSIONS DIRECTORY.
 if [[ -z "${GHIDRA_DIRECT_EXTENSION_INSTALLATION_DIR:-}" || ! -d "$GHIDRA_DIRECT_EXTENSION_INSTALLATION_DIR" ]]; then
-    echo "ERROR: GHIDRA_DIRECT_EXTENSION_INSTALLATION_DIR not set or directory not found"
+    echo "ERROR: GHIDRA_DIRECT_EXTENSION_INSTALLATION_DIR not set or directory not found: ${GHIDRA_DIRECT_EXTENSION_INSTALLATION_DIR:-}"
     echo ""
     usage
 fi
@@ -64,8 +89,12 @@ echo ""
 # FORCE STOP GHIDRA.
 # TODO: This could lead to data loss! Make sure to warn about that or quit in a nicer fashion.
 # However, this is fine for my current extension development.
-echo "Force stopping Ghidra..."
-pkill -f ghidra || true
+if [[ "$NO_KILL" -eq 1 ]]; then
+    echo "Skipping Ghidra kill..."
+else
+    echo "Force stopping Ghidra..."
+    pkill -f ghidra || true
+fi
 
 echo "Building extension..."
 rm -r dist/
