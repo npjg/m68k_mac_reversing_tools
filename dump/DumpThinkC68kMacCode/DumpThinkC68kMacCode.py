@@ -94,13 +94,19 @@ def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None
     code_resources = resources[b"CODE"]
     crels = resources[b"CREL"]
 
-    jumptable = code_resources[0]
-    above_a5_size = u32(jumptable[:4])
-    below_a5_size = u32(jumptable[4:8])
-    jump_table_size = u32(jumptable[8:12])
-    jump_table_offset = u32(jumptable[12:16])
-    assert jump_table_size == len(jumptable) - 0x10
-    assert jump_table_offset == 0x20
+    has_jumptable = False
+    below_a5_size = 0x10000
+    if code_resources.get(0):
+        jumptable = code_resources[0]
+        above_a5_size = u32(jumptable[:4])
+        below_a5_size = u32(jumptable[4:8])
+        jump_table_size = u32(jumptable[8:12])
+        jump_table_offset = u32(jumptable[12:16])
+        assert jump_table_size == len(jumptable) - 0x10
+        assert jump_table_offset == 0x20
+        has_jumptable = True
+    else:
+        print("WARNING: Didn't find CODE resource 0, assuming this is a library")
 
     a5 = below_a5_size + SYSTEM_RAM_SIZE
     for code_resource in code_resources:
@@ -185,43 +191,44 @@ def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None
     # Construct A5 world (application-level globals and jump table, SEPARATE from system RAM).
     # A5 register points to the boundary between "below A5" and "above A5".
     a5_world = b"\x00" * 32 # TODO: Account for QuickDraw global vars.
-    for i in range(0x10, len(jumptable), 8):
-        # Construct jumptable (all loaded jumptable entries).
-        # See Inside Macintosh II-61 (The Segment Loader).
-        entry = jumptable[i : i + 8]
-        if entry[2:4] == b"\x3f\x3c":
-            # Unloaded jumptable entry structure:
-            #    XX XX: segment offset
-            #    3f 3c XX XX: move.w SEGMENT_NUMBER, -(SP)
-            #        pushes SEGMENT_NUMBER onto the stack for _LoadSeg trap
-            #    a9 f0: _LoadSeg trap number
-            segment_offset = u16(entry[:2])
-            segment_num = u16(entry[4:6])
-            if segment_num in segment_bases:
-                addr = segment_bases[segment_num] + segment_offset
+    if (has_jumptable):
+        for i in range(0x10, len(jumptable), 8):
+            # Construct jumptable (all loaded jumptable entries).
+            # See Inside Macintosh II-61 (The Segment Loader).
+            entry = jumptable[i : i + 8]
+            if entry[2:4] == b"\x3f\x3c":
+                # Unloaded jumptable entry structure:
+                #    XX XX: segment offset
+                #    3f 3c XX XX: move.w SEGMENT_NUMBER, -(SP)
+                #        pushes SEGMENT_NUMBER onto the stack for _LoadSeg trap
+                #    a9 f0: _LoadSeg trap number
+                segment_offset = u16(entry[:2])
+                segment_num = u16(entry[4:6])
+                if segment_num in segment_bases:
+                    addr = segment_bases[segment_num] + segment_offset
+                else:
+                    print(f"WARNING: Code segment {segment_num} not found for jumptable entry {(i-0x10)//8}, replacing with dummy address")
+                    addr = DUMMY_ADDR
+
+            elif entry[2:4] == b"\x4e\xed":
+                # TODO: Get a source for this.
+                # Preloaded? jumptable entry structure:
+                #    XX XX: ???
+                #    4e ed XX XX: jmp OFFSET(a5)
+                #    4e 71: nop
+                offset = u16(entry[4:6])
+                segment_num = 0  # dummy
+                addr = offset + a5
+
             else:
-                print(f"WARNING: Code segment {segment_num} not found for jumptable entry {(i-0x10)//8}, replacing with dummy address")
+                print(f"WARNING: Unknown format for jumptable entry {(i-0x10)//8}, replacing with dummy address")
+                segment_num = 0  # dummy
                 addr = DUMMY_ADDR
 
-        elif entry[2:4] == b"\x4e\xed":
-            # TODO: Get a source for this.
-            # Preloaded? jumptable entry structure:
-            #    XX XX: ???
-            #    4e ed XX XX: jmp OFFSET(a5)
-            #    4e 71: nop
-            offset = u16(entry[4:6])
-            segment_num = 0  # dummy
-            addr = offset + a5
-
-        else:
-            print(f"WARNING: Unknown format for jumptable entry {(i-0x10)//8}, replacing with dummy address")
-            segment_num = 0  # dummy
-            addr = DUMMY_ADDR
-
-        # Create a LOADED jumptable entry.
-        a5_world += to_u16(segment_num)
-        a5_world += b"\x4e\xf9"  # jmp
-        a5_world += to_u32(addr)
+            # Create a LOADED jumptable entry.
+            a5_world += to_u16(segment_num)
+            a5_world += b"\x4e\xf9"  # jmp
+            a5_world += to_u32(addr)
 
     below_a5_data = bytes(below_a5_size)
 
