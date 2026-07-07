@@ -20,6 +20,8 @@ public class M68kMacSymbols extends GhidraScript {
         { (byte) 0x4e, (byte) 0x74 }  // rtd
     };
 
+    private static final int MIN_ASCII_SYMBOL_LENGTH = 4;
+
     @Override
     protected void run() throws Exception {
         // Verify the processor.
@@ -46,6 +48,8 @@ public class M68kMacSymbols extends GhidraScript {
                         MacsBugSymbolDataType macsBugSymbolDt = new MacsBugSymbolDataType(dtm);
                         Listing listing = currentProgram.getListing();
                         try {
+                            boolean didApplyMacsBugSymbol = false;
+
                             // Check if there's already an instruction at this location - skip if so.
                             // This prevents clearing already-disassembled functions.
                             Instruction existingInst = listing.getInstructionAt(macsBugSymbolStart);
@@ -59,33 +63,81 @@ public class M68kMacSymbols extends GhidraScript {
                             // Calculate the expected symbol length.
                             MemBuffer buffer = new MemoryBufferImpl(currentProgram.getMemory(), macsBugSymbolStart);
                             int symbolTotalLength = macsBugSymbolDt.getLength(buffer);
-                            if (symbolTotalLength <= 0) {
-                                continue;  // Invalid symbol format - skip
+                            if (symbolTotalLength > 0) {
+                                // Clear existing data in the range where the symbol will be placed.
+                                // This prevents conflicts with existing data types, namely auto-detected strings.
+                                Address symbolEnd = macsBugSymbolStart.addNoWrap(symbolTotalLength - 1);
+                                listing.clearCodeUnits(macsBugSymbolStart, symbolEnd, false);
+
+                                // Create the MacsBug symbol data type.
+                                Data symbolData = listing.createData(macsBugSymbolStart, macsBugSymbolDt);
+                                if (symbolData != null) {
+                                    // Extract symbol name from the data type's value.
+                                    Object symbolValue = symbolData.getValue();
+                                    if (symbolValue instanceof String) {
+                                        String symbolName = (String) symbolValue;
+                                        symbolName = symbolName.replace(" ", "_");
+                                        func.setName(symbolName, SourceType.ANALYSIS);
+                                        printf("MacsBug symbol: %s (%s)\n", symbolName, func.getEntryPoint());
+                                        didApplyMacsBugSymbol = true;
+                                    }
+                                }
                             }
 
-                            // Clear existing data in the range where the symbol will be placed.
-                            // This prevents conflicts with existing data types, namely auto-detected strings.
-                            Address symbolEnd = macsBugSymbolStart.addNoWrap(symbolTotalLength - 1);
-                            listing.clearCodeUnits(macsBugSymbolStart, symbolEnd, false);
-
-                            // Create the MacsBug symbol data type.
-                            Data symbolData = listing.createData(macsBugSymbolStart, macsBugSymbolDt);
-                            if (symbolData != null) {
-                                // Extract symbol name from the data type's value.
-                                Object symbolValue = symbolData.getValue();
-                                if (symbolValue instanceof String) {
-                                    String symbolName = (String) symbolValue;
-                                    symbolName = symbolName.replace(" ", "_");
-                                    func.setName(symbolName, SourceType.ANALYSIS);
-                                    printf("MacsBug symbol: %s (%s)\n", symbolName, func.getEntryPoint());
+                            if (!didApplyMacsBugSymbol) {
+                                String fallbackAsciiSymbol = getTrailingAsciiSymbol(macsBugSymbolStart, listing);
+                                if (fallbackAsciiSymbol != null) {
+                                    String normalizedSymbolName = fallbackAsciiSymbol.replace(" ", "_");
+                                    func.setName(normalizedSymbolName, SourceType.ANALYSIS);
+                                    printf("Fallback ASCII symbol: %s (%s)\n", normalizedSymbolName, func.getEntryPoint());
                                 }
                             }
                         } catch (Exception e) {
                             printf("WARNING: Failed to create MacsBug symbol at %s: %s\n", macsBugSymbolStart, e.getMessage());
+
+                            String fallbackAsciiSymbol = getTrailingAsciiSymbol(macsBugSymbolStart, listing);
+                            if (fallbackAsciiSymbol != null) {
+                                String normalizedSymbolName = fallbackAsciiSymbol.replace(" ", "_");
+                                func.setName(normalizedSymbolName, SourceType.ANALYSIS);
+                                printf("Fallback ASCII symbol: %s (%s)\n", normalizedSymbolName, func.getEntryPoint());
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    private String getTrailingAsciiSymbol(Address startAddress, Listing listing) throws MemoryAccessException {
+        Memory memory = currentProgram.getMemory();
+        Address currentAddress = startAddress;
+        StringBuilder candidateSymbolBuilder = new StringBuilder();
+
+        while (memory.contains(currentAddress)) {
+            if (listing.getInstructionAt(currentAddress) != null || listing.getDefinedDataAt(currentAddress) != null) {
+                break;
+            }
+
+            byte byteValue = memory.getByte(currentAddress);
+            if (!isPrintableAscii(byteValue)) {
+                return null;
+            }
+
+            candidateSymbolBuilder.append((char) (byteValue & 0xff));
+            currentAddress = currentAddress.next();
+            if (currentAddress == null) {
+                break;
+            }
+        }
+
+        if (candidateSymbolBuilder.length() >= MIN_ASCII_SYMBOL_LENGTH) {
+            return candidateSymbolBuilder.toString();
+        }
+        return null;
+    }
+
+    private boolean isPrintableAscii(byte byteValue) {
+        int asciiValue = byteValue & 0xff;
+        return asciiValue >= 0x20 && asciiValue <= 0x7e;
     }
 }
