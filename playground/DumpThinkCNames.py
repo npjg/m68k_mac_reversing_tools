@@ -15,7 +15,7 @@ def to_ascii_preview(raw_bytes: bytes) -> str:
 def decode_name(raw_bytes: bytes) -> str:
     return raw_bytes.decode("ascii", errors="replace")
 
-def parse_name_records(file_bytes: bytes, source_label: str):
+def parse_name_records(file_bytes: bytes, source_label: str, is_verbose: bool) -> None:
     stream = io.BytesIO(file_bytes)
 
     record_index = 0
@@ -31,15 +31,18 @@ def parse_name_records(file_bytes: bytes, source_label: str):
         has_only_space_padding = all(byte == 0x20 for byte in trailing_padding_bytes)
         decoded_name = decode_name(name_bytes)
 
-        print(
-            f"@0x{record_offset:08X} "
-            f"rec=0x{record_index:02X} "
-            f"len=0x{record_length:02X} "
-            f"name_len=0x{declared_name_length:02X} "
-            f"padding_len={len(trailing_padding_bytes):02X} "
-            f"padding_ok={'yes' if has_only_space_padding else 'no'} "
-            f"name={decoded_name} "
-        )
+        if is_verbose:
+            print(
+                f"@0x{record_offset:08X} "
+                f"rec=0x{record_index:02X} "
+                f"len=0x{record_length:02X} "
+                f"name_len=0x{declared_name_length:02X} "
+                f"padding_len={len(trailing_padding_bytes):02X} "
+                f"padding_ok={'yes' if has_only_space_padding else 'no'} "
+                f"name={decoded_name} "
+            )
+        else:
+            print(decoded_name)
 
         record_index += 1
 
@@ -52,6 +55,11 @@ def parse_arguments(argument_values: Sequence[str] | None = None) -> argparse.Na
         nargs="+",
         help="Filepaths to dumped THINK C resource file(s)",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print detailed parsing information",
+    )
     return parser.parse_args(argument_values)
 
 def main() -> int:
@@ -59,8 +67,9 @@ def main() -> int:
 
     for filepath in arguments.filepaths:
         with open(filepath, "rb") as source_file:
-            print(filepath)
-            parse_name_records(source_file.read(), filepath)
+            if arguments.verbose:
+                print(filepath)
+            parse_name_records(source_file.read(), filepath, arguments.verbose)
 
     return 0
 
