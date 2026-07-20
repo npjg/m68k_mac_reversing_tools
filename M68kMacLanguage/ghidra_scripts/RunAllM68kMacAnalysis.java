@@ -22,10 +22,7 @@ public class RunAllM68kMacAnalysis extends GhidraScript {
         println("\nFinding symbols...");
         runScript("M68kMacSymbols.java");
 
-        println("\nPropagating A5 thunks...");
-        runScript("M68kMacPropagateThunks.java");
-
-        println("\nMarking up syscalls markup syscalls...");
+        println("\nMarking up syscalls...");
         runScript("M68kMacSyscallScript.java");
 
         println("\nDemangling CodeWarrior symbols...");

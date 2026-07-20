@@ -97,7 +97,7 @@ else
 fi
 
 echo "Building extension..."
-rm -r dist/
+rm -r dist/ || true
 gradle -PGHIDRA_INSTALL_DIR="$GHIDRA_INSTALL_DIR"
 
 # EXTRACT THE EXTENSION.

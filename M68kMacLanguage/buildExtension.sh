@@ -42,7 +42,7 @@ fi
 
 # BUILD THE EXTENSION.
 echo "Building extension..."
-rm -r dist/
+rm -r dist/ || true
 gradle -PGHIDRA_INSTALL_DIR="$GHIDRA_INSTALL_DIR"
 
 # COPY THE EXTENSION WHERE GHIDRA CAN FIND IT TO INSTALL.

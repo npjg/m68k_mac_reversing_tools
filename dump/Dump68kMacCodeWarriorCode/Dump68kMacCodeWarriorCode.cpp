@@ -470,7 +470,8 @@ static int __LoadSeg__(
         int32_t old_address = (int32_t)read_be32((char*)&entry->jumpaddress);
         uint16_t segment = read_be16((char*)&entry->segment);
 
-        // Transform this to a loaded jumptable entry.
+        // Transform this to a loaded jumptable entry. Remember this is STILL the non-standard
+        // CodeWarrior format!
         // AFTER (loaded):
         //   entry.jumpinstruction = 0x4EF9 (absolute long jump)
         //   entry.absolute_address = segmentBase + old_offset
