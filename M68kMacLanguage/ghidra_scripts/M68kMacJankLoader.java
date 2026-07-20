@@ -71,6 +71,15 @@ public class M68kMacJankLoader extends GhidraScript {
         // TODO: Is there a better way to parse the jumptable entries than doing all this manual
         // offset stuff?
         Address jumptableEntry = a5.addNoWrap(JUMPTABLE_OFFSET);
+        if (!currentProgram.getMemory().contains(jumptableEntry)) {
+            popup(String.format(
+                "Jumptable start %s isn't in memory. " +
+                "The loaded binary is likely a library and doesn't have its own jumptable. Stopping.",
+                jumptableEntry
+            ));
+            return;
+        }
+
         try {
             while (currentProgram.getMemory().contains(jumptableEntry)) {
                 // TODO: Actually check the addresses.
