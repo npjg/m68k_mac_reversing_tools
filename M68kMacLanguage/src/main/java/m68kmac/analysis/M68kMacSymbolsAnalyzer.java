@@ -17,15 +17,17 @@ import ghidra.program.model.mem.MemoryAccessException;
 import ghidra.program.model.mem.MemoryBufferImpl;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SourceType;
+import ghidra.framework.options.Options;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
 
 import m68kmac.datatypes.MacsBugSymbolDataType;
 
 /**
- * Analyzer that applies MacsBug symbols to functions in m68k classic Mac programs.
+ * Analyzer that applies MacsBug function names to functions in m68k classic Mac programs.
  * TODO: I think PPC programs with symbols probably use a similar format, but this
  * analyzer right now ONLY supports m68k.
+ * TODO: Are there other types of symbols that can be applied than just function names?
  *
  * MacsBug symbols appear immediately after function return instructions and encode
  * the function name. This analyzer locates these symbols and applies them as function
@@ -46,6 +48,10 @@ public class M68kMacSymbolsAnalyzer extends AbstractAnalyzer {
 
     private static final int MIN_ASCII_SYMBOL_LENGTH = 4;
 
+    private static final String MACSBUG_TAG = "MacsBug Symbol";
+    private static final String OPTION_OVERWRITE = "Overwrite previously applied symbols";
+    private boolean overwriteNonDefaultNames = false;
+
     public M68kMacSymbolsAnalyzer() {
         super(NAME, DESCRIPTION, AnalyzerType.FUNCTION_ANALYZER);
         // Run after functions are created.
@@ -59,6 +65,20 @@ public class M68kMacSymbolsAnalyzer extends AbstractAnalyzer {
         String processor = program.getLanguage().getProcessor().toString();
         return processor.equals("68000") &&
                program.getLanguageID().toString().contains("mac");
+    }
+
+    @Override
+    public void registerOptions(Options options, Program program) {
+        options.registerOption(
+            OPTION_OVERWRITE,
+            false,
+            null,
+            "Overwrite symbols previously applied by this or other analyzers. (This WILL undo demangled names and such.)");
+    }
+
+    @Override
+    public void optionsChanged(Options options, Program program) {
+        overwriteNonDefaultNames = options.getBoolean(OPTION_OVERWRITE, false);
     }
 
     @Override
@@ -76,7 +96,7 @@ public class M68kMacSymbolsAnalyzer extends AbstractAnalyzer {
 
             // Make sure this is a fuction name we can overwrite.
             Symbol symbol = function.getSymbol();
-            if (symbol.getSource() != SourceType.DEFAULT) {
+            if (symbol.getSource() != SourceType.DEFAULT && !overwriteNonDefaultNames) {
                 // ONLY overwrite default function names.
                 continue;
             }
