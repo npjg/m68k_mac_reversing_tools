@@ -13,10 +13,10 @@ import collections
 
 ResourceFork = dict[bytes, dict[int, macresources.main.Resource]]
 
-# As described in the readme, "system RAM" in the dump is the low-memory region for 68k Mac OS system globals
-# (NOT part of an A5 world for any application). Since applications can directly read/write these system
-# globals for timing, memory info, etc., we need to be able to track these variables in Ghidra.
-SYSTEM_RAM_SIZE = 0x10000
+# As described in the readme, "system globals" in the dump is the low-memory region for 68k Mac OS system
+# globals (NOT part of an A5 world for any application). Since applications can directly read/write these
+# system globals for timing, memory info, etc., we need to be able to track these variables in Ghidra.
+SYSTEM_GLOBALS_SIZE = 0x10000
 DUMMY_ADDR = 0xFFFFFFFF
 
 # M68k is big endian.
@@ -111,7 +111,7 @@ def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None
     else:
         print("WARNING: Didn't find CODE resource 0, assuming this is a library")
 
-    a5 = below_a5_size + SYSTEM_RAM_SIZE
+    a5 = below_a5_size + SYSTEM_GLOBALS_SIZE
     for code_resource in code_resources:
         if code_resource == 0:
             continue
@@ -120,7 +120,7 @@ def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None
     if b"STRS" in resources:
         a5 += len(resources[b"STRS"][0])
 
-    # CREATE SYSTEM RAM (LOW MEMORY).
+    # CREATE SYSTEM GLOBALS (LOW MEMORY).
     # Our custom dump header goes at the very start of system RAM.
     dump = b""
     header = (
@@ -130,10 +130,10 @@ def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None
     # move.l #a5_value, a5
     # rts
     header += b"\x2a\x7c" + to_u32(a5) + b"\x4e\x75"
-    system_ram = bytearray(header + bytes(SYSTEM_RAM_SIZE - len(header)))
+    system_globals_memory = bytearray(header + bytes(SYSTEM_GLOBALS_SIZE - len(header)))
     # This app's A5 is stored in system global CurrentA5 (low memory 0x904).
-    system_ram[0x904:0x908] = to_u32(a5)
-    dump += system_ram
+    system_globals_memory[0x904:0x908] = to_u32(a5)
+    dump += system_globals_memory
 
     # TODO: Why do we do this?
     if b"STRS" in resources:
@@ -191,7 +191,7 @@ def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None
                 print(f"seg {code_resource} addr {addr:04x} ({data:08x} -> {data2:08x})")
         dump += bytes(segment_data)
 
-    # Construct A5 world (application-level globals and jump table, SEPARATE from system RAM).
+    # Construct A5 world (application-level globals and jump table, SEPARATE from system globals).
     # A5 register points to the boundary between "below A5" and "above A5".
     a5_world = b"\x00" * 32 # TODO: Account for QuickDraw global vars.
     if has_jumptable:

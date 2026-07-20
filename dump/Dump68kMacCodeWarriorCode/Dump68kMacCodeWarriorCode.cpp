@@ -60,14 +60,14 @@ extern "C" {
     static char *__decomp_data__(char *ptr,char *datasegment);
 }
 
-// As described in the readme, "system RAM" in the dump is the low-memory region for 68k Mac OS system globals
+// As described in the readme, "system globals" in the dump is the low-memory region for 68k Mac OS system globals
 // (NOT part of an A5 world for any application). Since applications can directly read/write these system
 // globals for timing, memory info, etc., we need to be able to track these variables in Ghidra.
-const uint32_t SYSTEM_RAM_SIZE = 0x10000;
+const uint32_t SYSTEM_GLOBALS_SIZE = 0x10000;
 
-// CODE resource starting offset in the dump (after system RAM + A5 world space).
-// Memory layout: [0x0-0x10000: System RAM] [0x10000+: A5 world] [0x70000+: CODE segments]
-const uint32_t code_resource_offset = SYSTEM_RAM_SIZE + 0x60000;
+// CODE resource starting offset in the dump (after system globals + A5 world space).
+// Memory layout: [0x0-0x10000: System globals] [0x10000+: A5 world] [0x70000+: CODE segments]
+const uint32_t code_resource_offset = SYSTEM_GLOBALS_SIZE + 0x60000;
 
 // Helper functions to read and write big-endian integers.
 static inline uint32_t read_be32(const char* ptr) {
@@ -511,7 +511,7 @@ void* __Startup__(
         total_code_size += seg.size;
     }
 
-	// Allocate memory for the entire dump (system RAM + A5 world + all CODE resources).
+	// Allocate memory for the entire dump (system globals + A5 world + all CODE resources).
     const uint32_t total_a5_world_size = below_a5_size + above_a5_size;
     const uint32_t total_dump_size = code_resource_offset + total_code_size;
     char* dump_base = (char*)malloc(total_dump_size);
@@ -520,19 +520,19 @@ void* __Startup__(
     }
     memset(dump_base, 0, total_dump_size);
 
-    // Create system RAM (low memory).
-    char* system_ram = dump_base;
+    // Create system globals (low memory).
+    char* system_globals = dump_base;
     // Put garbage so address 0 isn't recognized as a string.
-    system_ram[0] = 'J'; system_ram[1] = 0xFF;
-    system_ram[2] = 'A'; system_ram[3] = 0xFF;
-    system_ram[4] = 'N'; system_ram[5] = 0xFF;
-    system_ram[6] = 'K'; system_ram[7] = 0xFF;
+    system_globals[0] = 'J'; system_globals[1] = 0xFF;
+    system_globals[2] = 'A'; system_globals[3] = 0xFF;
+    system_globals[4] = 'N'; system_globals[5] = 0xFF;
+    system_globals[6] = 'K'; system_globals[7] = 0xFF;
 
-    // Calculate A5 position within the allocated memory (after system RAM).
-    uint32_t a5_unrelocated = SYSTEM_RAM_SIZE + below_a5_size;
-    char* a5_ptr = dump_base + SYSTEM_RAM_SIZE + below_a5_size;
+    // Calculate A5 position within the allocated memory (after system globals).
+    uint32_t a5_unrelocated = SYSTEM_GLOBALS_SIZE + below_a5_size;
+    char* a5_ptr = dump_base + SYSTEM_GLOBALS_SIZE + below_a5_size;
     // This app's A5 is stored in global var CurrentA5 (low memory 0x904).
-    write_be32(system_ram + 0x904, a5_unrelocated);
+    write_be32(system_globals + 0x904, a5_unrelocated);
 
     // Initialize global data area from DATA 0 resource.
     if (data0_resource != NULL) {
