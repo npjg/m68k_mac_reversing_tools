@@ -1,0 +1,1 @@
+These scripts are mostly my desperate attempt to avoid doing Ghidra extension development in Eclipse.
