@@ -8,3 +8,6 @@ dist/
 # Ignore base processor SLEIGH files (copied in as part of extension build process).
 *.sinc
 *.sla
+
+# These files seem to be created by Gradle. We don't need them.
+M68kMacLanguage/bin/main

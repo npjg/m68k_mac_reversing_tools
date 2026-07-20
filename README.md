@@ -74,6 +74,12 @@ The dumpers are conceptually very simple - they first create a low-memory region
 # Resources
  - [RetroGhidra](https://github.com/hippietrail/RetroGhidra/tree/main) has a [resource fork loader](https://github.com/hippietrail/RetroGhidra/blob/main/src/main/java/retro/ClassicMacResourceForkLoader.java), but it does not construct the A5 world at all. This is a deal-breaker for code that relies heavily on global data.
 
+# VS Code Development
+If you have these extensions installed:
+* Extension Pack for Java (or at least Language Support for Java by Red Hat)
+* Gradle for Java
+then opening the folder should cause Gradle to import the project.
+
 ## TODO
 * Finish creating properly typed functions for `_FP68K` routines
 * Create properly typed functions for `_*Dispatch`, `_Pack*` routines

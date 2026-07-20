@@ -46,6 +46,14 @@ else {
 	throw new GradleException("GHIDRA_INSTALL_DIR is not defined!")
 }
 
+sourceSets {
+	main {
+		java {
+			srcDir "ghidra_scripts"
+		}
+	}
+}
+
 // Since we have a custom slaspec for handling syscalls, we need the original 68000 SINC definition at build time.
 // Unfortunately, this definition can't be found in its original location, so we need to copy it here so the extension
 // can be built, but without duplicating stuff from base Ghidra.
