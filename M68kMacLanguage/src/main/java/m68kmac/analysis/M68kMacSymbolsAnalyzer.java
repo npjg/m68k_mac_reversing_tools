@@ -15,6 +15,7 @@ import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryAccessException;
 import ghidra.program.model.mem.MemoryBufferImpl;
+import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
@@ -72,6 +73,13 @@ public class M68kMacSymbolsAnalyzer extends AbstractAnalyzer {
         // Search each function for return instructions.
         for (Function function : program.getFunctionManager().getFunctionsNoStubs(true)) {
             monitor.checkCancelled();
+
+            // Make sure this is a fuction name we can overwrite.
+            Symbol symbol = function.getSymbol();
+            if (symbol.getSource() != SourceType.DEFAULT) {
+                // ONLY overwrite default function names.
+                continue;
+            }
 
             for (Instruction instruction : listing.getInstructions(function.getBody(), true)) {
                 try {
