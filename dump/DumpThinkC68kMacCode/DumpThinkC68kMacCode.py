@@ -94,16 +94,19 @@ def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None
     code_resources = resources[b"CODE"]
     crels = resources[b"CREL"]
 
+    # Parse the jumptable.
+    # See "The Jump Table" in Mac OS Runtime Architectures - Chapter 10: Classic 68K Runtime Architectures.
     has_jumptable = False
     below_a5_size = 0x10000
     if code_resources.get(0):
-        jumptable = code_resources[0]
-        above_a5_size = u32(jumptable[:4])
-        below_a5_size = u32(jumptable[4:8])
-        jump_table_size = u32(jumptable[8:12])
-        jump_table_offset = u32(jumptable[12:16])
-        assert jump_table_size == len(jumptable) - 0x10
+        # Parse the jumptable header from CODE 0.
+        above_a5_size = u32(code_resources[0][:4])
+        below_a5_size = u32(code_resources[0][4:8])
+        jump_table_size = u32(code_resources[0][8:12])
+        jump_table_offset = u32(code_resources[0][12:16])
+        assert jump_table_size == len(code_resources[0]) - 0x10
         assert jump_table_offset == 0x20
+        jumptable = code_resources[0][16:]
         has_jumptable = True
     else:
         print("WARNING: Didn't find CODE resource 0, assuming this is a library")
@@ -191,12 +194,14 @@ def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None
     # Construct A5 world (application-level globals and jump table, SEPARATE from system RAM).
     # A5 register points to the boundary between "below A5" and "above A5".
     a5_world = b"\x00" * 32 # TODO: Account for QuickDraw global vars.
-    if (has_jumptable):
-        for i in range(0x10, len(jumptable), 8):
-            # Construct jumptable (all loaded jumptable entries).
-            # See Inside Macintosh II-61 (The Segment Loader).
-            entry = jumptable[i : i + 8]
+    if has_jumptable:
+        JUMPTABLE_ENTRY_SIZE = 8
+        for i in range(0, len(jumptable), JUMPTABLE_ENTRY_SIZE):
+            # Construct jumptable and make sure all jumptable entries are in
+            # the "loaded" format in the dump. See Inside Macintosh II-61 (The Segment Loader).
+            entry = jumptable[i : i + JUMPTABLE_ENTRY_SIZE]
             if entry[2:4] == b"\x3f\x3c":
+                # This jumptable entry is stored unloaded.
                 # Unloaded jumptable entry structure:
                 #    XX XX: segment offset
                 #    3f 3c XX XX: move.w SEGMENT_NUMBER, -(SP)
@@ -207,10 +212,11 @@ def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None
                 if segment_num in segment_bases:
                     addr = segment_bases[segment_num] + segment_offset
                 else:
-                    print(f"WARNING: Code segment {segment_num} not found for jumptable entry {(i-0x10)//8}, replacing with dummy address")
+                    print(f"WARNING: Code segment {segment_num} not found for jumptable entry {i//8}, replacing with dummy address")
                     addr = DUMMY_ADDR
 
             elif entry[2:4] == b"\x4e\xed":
+                # This jumptable entry is stored preloaded.
                 # TODO: Get a source for this.
                 # Preloaded? jumptable entry structure:
                 #    XX XX: ???
@@ -221,17 +227,19 @@ def dump_file_from_resources(resources: ResourceFork, out_filename: str) -> None
                 addr = offset + a5
 
             else:
-                print(f"WARNING: Unknown format for jumptable entry {(i-0x10)//8}, replacing with dummy address")
+                print(f"WARNING: Unknown format for jumptable entry {i//8}, replacing with dummy address")
                 segment_num = 0  # dummy
                 addr = DUMMY_ADDR
 
-            # Create a LOADED jumptable entry.
+            # Always create a LOADED jumptable entry for our dump.
+            print(f"Jumptable entry {i//8}: CODE {segment_num} @ 0x{addr:0x}")
             a5_world += to_u16(segment_num)
             a5_world += b"\x4e\xf9"  # jmp
             a5_world += to_u32(addr)
 
     below_a5_data = bytes(below_a5_size)
 
+    # Put global data in the A5 world.
     # Applying DATA in this way ONLY works for binaries that don't do custom loading and compression
     # of A5 world data (like CodeWarrior).
     if b"ZERO" in resources and b"DATA" in resources:
