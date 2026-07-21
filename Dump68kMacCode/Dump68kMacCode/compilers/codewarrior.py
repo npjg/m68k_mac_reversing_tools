@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import sys
 
-from constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
-from stream import ResourceFork, as_int8, as_int16, as_int32, read_resource_fork
+from ..constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
+from ..stream import ResourceFork, as_int8, as_int16, as_int32, read_resource_fork
 
 # Helper functions to read and write big-endian integers, mirroring the C++ read_be*/write_be*.
 # In C++ these took a `char *`; here they take a buffer plus an integer index into it.

@@ -6,8 +6,8 @@ from mrcrowbar import utils
 
 import macresources
 
-from constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
-from stream import ResourceFork, as_int16, read_resource_fork
+from ..constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
+from ..stream import ResourceFork, as_int16, read_resource_fork
 
 DUMMY_ADDR = 0xFFFFFFFF
 
