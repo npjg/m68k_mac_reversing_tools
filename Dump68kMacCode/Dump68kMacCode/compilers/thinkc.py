@@ -5,7 +5,7 @@ from io import BytesIO
 from mrcrowbar import utils
 
 from ..constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
-from ..dump import CodeResourceRecord, MemoryDump
+from ..dump import CodeResourceRecord, RawCodeDump
 from ..stream import ResourceFork, as_int16, get_code_resource_label
 
 DUMMY_ADDR = 0xFFFFFFFF
@@ -33,7 +33,7 @@ def write_u16(stream: BytesIO, value: int) -> None:
 def write_u32(stream: BytesIO, value: int) -> None:
     stream.write(to_u32(value))
 
-def dump_file_from_resources(resources: ResourceFork) -> MemoryDump | None:
+def dump_file_from_resources(resources: ResourceFork) -> RawCodeDump | None:
     # For debugging purposes, print all the resources we found.
     for resource_type in resources:
         print(resource_type)
@@ -281,4 +281,4 @@ def dump_file_from_resources(resources: ResourceFork) -> MemoryDump | None:
     assert dump.tell() == a5
     dump.write(a5_world.getvalue())
 
-    return MemoryDump(dump.getvalue(), code_resource_records)
+    return RawCodeDump(dump.getvalue(), code_resource_records)

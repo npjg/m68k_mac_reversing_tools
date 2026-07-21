@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 
 from ..constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
-from ..dump import CodeResourceRecord, MemoryDump
+from ..dump import CodeResourceRecord, RawCodeDump
 from ..stream import ResourceFork, as_int8, as_int16, as_int32, get_code_resource_label
 
 # Helper functions to read and write big-endian integers, mirroring the C++ read_be*/write_be*.
@@ -411,7 +411,7 @@ EXPECTED_CODE1_START = bytes([
     0xA9, 0xA0,                          # syscall GetResource
 ])
 
-def dump_file_from_resources(resources: ResourceFork) -> MemoryDump | None:
+def dump_file_from_resources(resources: ResourceFork) -> RawCodeDump | None:
     # For debugging purposes, print all the resources we found.
     for resource_type in resources:
         print(resource_type)
@@ -491,5 +491,5 @@ def dump_file_from_resources(resources: ResourceFork) -> MemoryDump | None:
         ))
         segment_start_address = segment_end_address
 
-    return MemoryDump(bytes(dump), code_resource_records)
+    return RawCodeDump(bytes(dump), code_resource_records)
 # endregion

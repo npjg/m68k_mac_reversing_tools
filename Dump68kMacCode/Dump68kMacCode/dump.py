@@ -17,7 +17,7 @@ class CodeResourceRecord:
     end_address: int  # end offset in the system-RAM address space, exclusive
 
 @dataclass
-class MemoryDump:
+class RawCodeDump:
     """A dumper's output."""
 
     image: bytes
