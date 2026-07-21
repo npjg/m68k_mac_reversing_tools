@@ -63,14 +63,8 @@ extern "C" {
 // As described in the readme, "system globals" in the dump is the low-memory region for 68k Mac OS system globals
 // (NOT part of an A5 world for any application). Since applications can directly read/write these system
 // globals for timing, memory info, etc., we need to be able to track these variables in Ghidra.
-const uint32_t SYSTEM_GLOBALS_SIZE = 0x10000;
-
-// CODE resources start immediately after the system globals. The A5 world follows the code, mirroring the real 68k
-// Mac layout where the application heap (holding the loaded CODE segments) sits below the A5 world. Because the A5
-// world comes last, its position is derived at runtime from the actual total code size rather than reserving a
-// hardcoded slab ahead of the code.
 // Memory layout: [0x0-0x10000: System globals] [0x10000+: CODE segments] [after code: A5 world]
-const uint32_t code_resource_offset = SYSTEM_GLOBALS_SIZE;
+const uint32_t SYSTEM_GLOBALS_SIZE = 0x10000;
 
 // Helper functions to read and write big-endian integers.
 static inline uint32_t read_be32(const char* ptr) {
@@ -96,6 +90,7 @@ static inline void write_be16(char* ptr, uint16_t value) {
 	ptr[0] = (value >> 8) & 0xFF;
 	ptr[1] = value & 0xFF;
 }
+
 
 //region C++ File I/O Wrappers
 // C++ functionality to help with reading from the resource_dasm resource export directory. This directory looks like this:
@@ -237,6 +232,7 @@ bool find_resource_files(const std::string& directory_path, ResourceFiles& resou
 
     return true;
 }
+//endregion
 
 int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     const char* code0_file = resources.code0_path.c_str();
@@ -390,7 +386,7 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
         return 1;
     }
     const uint32_t total_a5_world_size = above_a5_size + below_a5_size;
-    const long total_dump_size = code_resource_offset + total_code_size + total_a5_world_size;
+    const long total_dump_size = SYSTEM_GLOBALS_SIZE + total_code_size + total_a5_world_size;
     a5_world_buffer.resize(total_dump_size);
     std::memcpy(a5_world_buffer.data(), a5_world_base, total_dump_size);
     free(a5_world_base);  // Free the malloc'd memory from __Startup__
@@ -517,7 +513,7 @@ void* __Startup__(
 
 	// Allocate memory for the entire dump (system globals + all CODE resources + A5 world, in that order).
     const uint32_t total_a5_world_size = below_a5_size + above_a5_size;
-    const uint32_t total_dump_size = code_resource_offset + total_code_size + total_a5_world_size;
+    const uint32_t total_dump_size = SYSTEM_GLOBALS_SIZE + total_code_size + total_a5_world_size;
     char* dump_ptr = (char*)malloc(total_dump_size);
     if (dump_ptr == NULL) {
         return NULL;
@@ -534,7 +530,7 @@ void* __Startup__(
 
     // Calculate A5 position within the allocated memory. The A5 world sits after all the code, and A5 itself points
     // past the below-A5 region (application globals) to the boundary with the above-A5 region (jump table).
-    uint32_t a5_world_offset = code_resource_offset + total_code_size;
+    uint32_t a5_world_offset = SYSTEM_GLOBALS_SIZE + total_code_size;
     uint32_t a5_base = a5_world_offset + below_a5_size;
     char* a5_ptr = dump_ptr + a5_base;
     // This app's A5 is stored in global var CurrentA5 (low memory 0x904).
@@ -561,11 +557,11 @@ void* __Startup__(
 
         // Relocate the DATA segment (A5 world).
         printf("\n*** %s: RELOCATE DATA 0 (A5 world) ***\n", __func__);
-        uint32_t code1_base = code_resource_offset;  // CODE 1 always starts here
+        uint32_t code1_base = SYSTEM_GLOBALS_SIZE;  // CODE 1 always starts here
         xref_data_ptr = __relocate__(xref_data_ptr, a5_ptr, a5_base, code1_base);
 
         // Load and relocate all CODE segments.
-        uint32_t current_code_offset = code_resource_offset;
+        uint32_t current_code_offset = SYSTEM_GLOBALS_SIZE;
         for (size_t i = 0; i < code_segments.size(); i++) {
             const CodeSegment& seg = code_segments[i];
             char* code_dest = dump_ptr + current_code_offset;
@@ -595,7 +591,7 @@ void* __Startup__(
         printf("Above A5: 0x%x bytes\n", above_a5_size);
         printf("Total A5 world size: 0x%x bytes\n", total_a5_world_size);
         printf("Total CODE segments size: 0x%x bytes (%zu segments)\n", total_code_size, code_segments.size());
-        printf("CODE starts at: 0x%x\n", code_resource_offset);
+        printf("CODE starts at: 0x%x\n", SYSTEM_GLOBALS_SIZE);
         printf("A5 world starts at: 0x%x\n", a5_world_offset);
         printf("Total dump size: 0x%x bytes\n", total_dump_size);
     }
