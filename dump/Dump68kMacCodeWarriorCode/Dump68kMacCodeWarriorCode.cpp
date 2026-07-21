@@ -52,13 +52,10 @@ struct CodeSegment {
     uint32_t size;
 };
 
-// C logic functions from original assembly.
-extern "C" {
-    void *__Startup__(char *data0_resource, std::vector<CodeSegment>& code_segments, uint32_t above_a5_size, uint32_t below_a5_size, char* segment_buffers[]);
-    static int __LoadSeg__(int16_t segment_number, char *code_resource, uint32_t code_size, uint32_t a5_base, uint32_t code_base, char *code_dest, char *dump_base);
-    static char *__relocate__(char *xref, char *segm, uint32_t a5_base, uint32_t code1_base);
-    static char *__decomp_data__(char *ptr,char *datasegment);
-}
+std::vector<char> __Startup__(char *data0_resource, std::vector<CodeSegment>& code_segments, uint32_t above_a5_size, uint32_t below_a5_size, char* segment_buffers[]);
+static int __LoadSeg__(int16_t segment_number, char *code_resource, uint32_t code_size, uint32_t a5_base, uint32_t code_base, char *code_dest, char *dump_base);
+static char *__relocate__(char *xref, char *segm, uint32_t a5_base, uint32_t code1_base);
+static char *__decomp_data__(char *ptr,char *datasegment);
 
 // As described in the readme, "system globals" in the dump is the low-memory region for 68k Mac OS system globals
 // (NOT part of an A5 world for any application). Since applications can directly read/write these system
@@ -267,11 +264,9 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     // Pointers that can be modified to read through the buffers
     char* data0_resource = nullptr;
     char* code0_resource = nullptr;
-    void* dump_base = nullptr;
 
     uint32_t above_a5_size = 0;
     uint32_t below_a5_size = 0;
-    uint32_t total_code_size = 0;
 
     // Load CODE 0 resource (jumptable).
     if (code0_filepath != NULL) {
@@ -329,7 +324,6 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
         }
 
         code_segments[i].size = file_size;
-        total_code_size += file_size;
     }
 
     // Check that CODE 1 starts with the expected instructions. This is a guard against creating a junk dump
@@ -363,17 +357,11 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     for (size_t i = 0; i < code_segment_buffers.size(); i++) {
         segment_buffer_ptrs[i] = code_segment_buffers[i].data();
     }
-    dump_base = __Startup__(data0_resource, code_segments, above_a5_size, below_a5_size, segment_buffer_ptrs.data());
-    if (dump_base == nullptr) {
-        printf("ERROR: A5 world setup failed\n");
+    dump = __Startup__(data0_resource, code_segments, above_a5_size, below_a5_size, segment_buffer_ptrs.data());
+    if (dump.empty()) {
+        printf("ERROR: Dumping failed\n");
         return 1;
     }
-    const uint32_t total_a5_world_size = above_a5_size + below_a5_size;
-    const long total_dump_size = SYSTEM_GLOBALS_SIZE + total_code_size + total_a5_world_size;
-    dump.resize(total_dump_size);
-    std::memcpy(dump.data(), dump_base, total_dump_size);
-    free(dump_base);  // Free the malloc'd memory from __Startup__
-    dump_base = nullptr;
 
     // Write out the dump file.
     std::ofstream dump_output(dump_file_cstr, std::ios::binary);
@@ -381,7 +369,7 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
         printf("ERROR: Cannot create dump file: %s\n", dump_file_cstr);
         return 1;
     }
-    dump_output.write(dump.data(), total_dump_size);
+    dump_output.write(dump.data(), dump.size());
     bool write_success = dump_output.good();
     dump_output.close();
     if (!write_success) {
@@ -389,7 +377,7 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
         return 1;
     }
 
-    printf("%zu bytes written to %s\n", (size_t)total_dump_size, dump_file_cstr);
+    printf("%zu bytes written to %s\n", dump.size(), dump_file_cstr);
     return 0;
 }
 
@@ -482,9 +470,9 @@ static int __LoadSeg__(
 /* Input....: code_segments - vector of all CODE segments      */
 /* Input....: above_a5_size, below_a5_size - A5 world sizes    */
 /* Input....: segment_buffers - array of pointers to segment data */
-/* Returns..: pointer to allocated and relocated dump          */
+/* Returns..: the fully relocated dump image (empty on failure) */
 /****************************************************************/
-void* __Startup__(
+std::vector<char> __Startup__(
     char *data0_resource, std::vector<CodeSegment>& code_segments,
     uint32_t above_a5_size, uint32_t below_a5_size, char* segment_buffers[])
 {
@@ -494,14 +482,11 @@ void* __Startup__(
         total_code_size += seg.size;
     }
 
-	// Allocate memory for the entire dump (system globals + all CODE resources + A5 world, in that order).
+	// Allocate zeroed memory for the entire dump (system globals + all CODE resources + A5 world, in that order).
     const uint32_t total_a5_world_size = below_a5_size + above_a5_size;
     const uint32_t total_dump_size = SYSTEM_GLOBALS_SIZE + total_code_size + total_a5_world_size;
-    char* dump_ptr = (char*)malloc(total_dump_size);
-    if (dump_ptr == NULL) {
-        return NULL;
-    }
-    memset(dump_ptr, 0, total_dump_size);
+    std::vector<char> dump_image(total_dump_size, 0);
+    char* dump_ptr = dump_image.data();
 
     // Create system globals (low memory).
     char* system_globals = dump_ptr;
@@ -544,6 +529,7 @@ void* __Startup__(
         xref_data_ptr = __relocate__(xref_data_ptr, a5_ptr, a5_base, code1_base);
 
         // Load and relocate all CODE segments.
+        // TODO: Is it true that we must have DATA 0 for this?
         uint32_t current_code_offset = SYSTEM_GLOBALS_SIZE;
         for (size_t i = 0; i < code_segments.size(); i++) {
             const CodeSegment& seg = code_segments[i];
@@ -561,8 +547,7 @@ void* __Startup__(
                 // CODE 2+: Use __LoadSeg__ for proper segment loading.
                 int result = __LoadSeg__(seg.segment_number, segment_buffers[i], seg.size, a5_base, current_code_offset, code_dest, dump_ptr);
                 if (result != 0) {
-                    free(dump_ptr);
-                    return NULL;
+                    return {};
                 }
             }
 
@@ -578,9 +563,8 @@ void* __Startup__(
         printf("A5 world starts at: 0x%x\n", a5_world_offset);
         printf("Total dump size: 0x%x bytes\n", total_dump_size);
     }
-
-    // Return the base of the allocated dump for writing
-    return dump_ptr;
+.
+    return dump_image;
 }
 
 /****************************************************************/
