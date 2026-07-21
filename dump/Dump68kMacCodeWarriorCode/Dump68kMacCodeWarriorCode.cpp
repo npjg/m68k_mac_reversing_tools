@@ -65,11 +65,12 @@ extern "C" {
 // globals for timing, memory info, etc., we need to be able to track these variables in Ghidra.
 const uint32_t SYSTEM_GLOBALS_SIZE = 0x10000;
 
-// TODO: This is incorrect because the A5 world is supposed to come AFTER the code.
-// Because otherwise, we have to hardcode this constant here.
-// CODE resource starting offset in the dump (after system globals + A5 world space).
-// Memory layout: [0x0-0x10000: System globals] [0x10000+: A5 world] [0x70000+: CODE segments]
-const uint32_t code_resource_offset = SYSTEM_GLOBALS_SIZE + 0x60000;
+// CODE resources start immediately after the system globals. The A5 world follows the code, mirroring the real 68k
+// Mac layout where the application heap (holding the loaded CODE segments) sits below the A5 world. Because the A5
+// world comes last, its position is derived at runtime from the actual total code size rather than reserving a
+// hardcoded slab ahead of the code.
+// Memory layout: [0x0-0x10000: System globals] [0x10000+: CODE segments] [after code: A5 world]
+const uint32_t code_resource_offset = SYSTEM_GLOBALS_SIZE;
 
 // Helper functions to read and write big-endian integers.
 static inline uint32_t read_be32(const char* ptr) {
@@ -388,7 +389,8 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
         printf("ERROR: A5 world setup failed\n");
         return 1;
     }
-    const long total_dump_size = code_resource_offset + total_code_size;
+    const uint32_t total_a5_world_size = above_a5_size + below_a5_size;
+    const long total_dump_size = code_resource_offset + total_code_size + total_a5_world_size;
     a5_world_buffer.resize(total_dump_size);
     std::memcpy(a5_world_buffer.data(), a5_world_base, total_dump_size);
     free(a5_world_base);  // Free the malloc'd memory from __Startup__
@@ -513,9 +515,9 @@ void* __Startup__(
         total_code_size += seg.size;
     }
 
-	// Allocate memory for the entire dump (system globals + A5 world + all CODE resources).
+	// Allocate memory for the entire dump (system globals + all CODE resources + A5 world, in that order).
     const uint32_t total_a5_world_size = below_a5_size + above_a5_size;
-    const uint32_t total_dump_size = code_resource_offset + total_code_size;
+    const uint32_t total_dump_size = code_resource_offset + total_code_size + total_a5_world_size;
     char* dump_ptr = (char*)malloc(total_dump_size);
     if (dump_ptr == NULL) {
         return NULL;
@@ -530,9 +532,11 @@ void* __Startup__(
     system_globals[4] = 'N'; system_globals[5] = 0xFF;
     system_globals[6] = 'K'; system_globals[7] = 0xFF;
 
-    // Calculate A5 position within the allocated memory (after system globals).
-    uint32_t a5_base = SYSTEM_GLOBALS_SIZE + below_a5_size;
-    char* a5_ptr = dump_ptr + SYSTEM_GLOBALS_SIZE + below_a5_size;
+    // Calculate A5 position within the allocated memory. The A5 world sits after all the code, and A5 itself points
+    // past the below-A5 region (application globals) to the boundary with the above-A5 region (jump table).
+    uint32_t a5_world_offset = code_resource_offset + total_code_size;
+    uint32_t a5_base = a5_world_offset + below_a5_size;
+    char* a5_ptr = dump_ptr + a5_base;
     // This app's A5 is stored in global var CurrentA5 (low memory 0x904).
     write_be32(system_globals + 0x904, a5_base);
 
@@ -586,12 +590,13 @@ void* __Startup__(
             current_code_offset += seg.size;
         }
 
-        printf("A5 register: 0x%x\n", below_a5_size);
+        printf("A5 register: 0x%x\n", a5_base);
         printf("Below A5: 0x%x bytes\n", below_a5_size);
         printf("Above A5: 0x%x bytes\n", above_a5_size);
         printf("Total A5 world size: 0x%x bytes\n", total_a5_world_size);
         printf("Total CODE segments size: 0x%x bytes (%zu segments)\n", total_code_size, code_segments.size());
         printf("CODE starts at: 0x%x\n", code_resource_offset);
+        printf("A5 world starts at: 0x%x\n", a5_world_offset);
         printf("Total dump size: 0x%x bytes\n", total_dump_size);
     }
 
