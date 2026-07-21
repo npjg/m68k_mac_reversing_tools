@@ -14,8 +14,8 @@ from .stream import ResourceFork, read_resource_fork
 
 # Maps the command-line dumper name to the routine that turns a resource fork into a raw memory dump.
 DUMPERS = {
-    "codewarrior": codewarrior.dump_file_from_resources,
-    "thinkc": thinkc.dump_file_from_resources,
+    "codewarrior": codewarrior.dump_code,
+    "thinkc": thinkc.dump_code,
 }
 
 def detect_dumper(resources: ResourceFork) -> str:

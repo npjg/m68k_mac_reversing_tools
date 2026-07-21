@@ -33,7 +33,7 @@ def write_u16(stream: BytesIO, value: int) -> None:
 def write_u32(stream: BytesIO, value: int) -> None:
     stream.write(to_u32(value))
 
-def dump_file_from_resources(resources: ResourceFork) -> RawCodeDump | None:
+def dump_code(resources: ResourceFork) -> RawCodeDump | None:
     if b"CODE" not in resources:
         print("ERROR: Found no CODE resources")
         return None

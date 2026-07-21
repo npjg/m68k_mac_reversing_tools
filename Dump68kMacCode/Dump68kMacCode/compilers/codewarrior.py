@@ -428,7 +428,7 @@ def is_codewarrior_binary(resources: ResourceFork) -> bool:
     has_full_preamble = len(code1_data) >= len(EXPECTED_CODE1_START)
     return has_full_preamble and code1_data[:len(EXPECTED_CODE1_START)] == EXPECTED_CODE1_START
 
-def dump_file_from_resources(resources: ResourceFork) -> RawCodeDump | None:
+def dump_code(resources: ResourceFork) -> RawCodeDump | None:
     if b"CODE" not in resources:
         print("ERROR: Found no CODE resources")
         return None
