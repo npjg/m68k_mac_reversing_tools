@@ -262,12 +262,12 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     std::vector<char> code0_buffer;
     std::vector<char> data0_buffer;
     std::vector<std::vector<char>> code_segment_buffers;  // One buffer per CODE segment
-    std::vector<char> a5_world_buffer;
+    std::vector<char> dump;
 
     // Pointers that can be modified to read through the buffers
     char* data0_resource = nullptr;
     char* code0_resource = nullptr;
-    void* a5_world_base = nullptr;
+    void* dump_base = nullptr;
 
     uint32_t above_a5_size = 0;
     uint32_t below_a5_size = 0;
@@ -363,17 +363,17 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     for (size_t i = 0; i < code_segment_buffers.size(); i++) {
         segment_buffer_ptrs[i] = code_segment_buffers[i].data();
     }
-    a5_world_base = __Startup__(data0_resource, code_segments, above_a5_size, below_a5_size, segment_buffer_ptrs.data());
-    if (a5_world_base == nullptr) {
+    dump_base = __Startup__(data0_resource, code_segments, above_a5_size, below_a5_size, segment_buffer_ptrs.data());
+    if (dump_base == nullptr) {
         printf("ERROR: A5 world setup failed\n");
         return 1;
     }
     const uint32_t total_a5_world_size = above_a5_size + below_a5_size;
     const long total_dump_size = SYSTEM_GLOBALS_SIZE + total_code_size + total_a5_world_size;
-    a5_world_buffer.resize(total_dump_size);
-    std::memcpy(a5_world_buffer.data(), a5_world_base, total_dump_size);
-    free(a5_world_base);  // Free the malloc'd memory from __Startup__
-    a5_world_base = nullptr;
+    dump.resize(total_dump_size);
+    std::memcpy(dump.data(), dump_base, total_dump_size);
+    free(dump_base);  // Free the malloc'd memory from __Startup__
+    dump_base = nullptr;
 
     // Write out the dump file.
     std::ofstream dump_output(dump_file_cstr, std::ios::binary);
@@ -381,7 +381,7 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
         printf("ERROR: Cannot create dump file: %s\n", dump_file_cstr);
         return 1;
     }
-    dump_output.write(a5_world_buffer.data(), total_dump_size);
+    dump_output.write(dump.data(), total_dump_size);
     bool write_success = dump_output.good();
     dump_output.close();
     if (!write_success) {
