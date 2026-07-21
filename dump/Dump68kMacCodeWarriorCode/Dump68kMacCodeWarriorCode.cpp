@@ -19,6 +19,16 @@
 
 namespace fs = std::filesystem;
 
+// Each individual CODE resource can also be called a "segment"
+// in Apple and CodeWarrior documentation. But to avoid confusion
+// with x86 segmentation, we will stick to the "resource" nomenclature
+// as much as possible in this program.
+struct CodeResource {
+    int id;
+    std::string filepath;
+    std::vector<char> data;
+};
+
 // From CodeWarrior's StartupLib.h.
 struct SegmentHeader {
     int16_t   jtsoffset;      // A5 relative offset of this segment's jump table (short version)
@@ -31,9 +41,9 @@ struct SegmentHeader {
 // From CodeWarrior's StartupLib.h.
 // This is DIFFERENT from the default Mac jump table entry. The default one would be this:
 // struct AppleJumpTableEntry {
-//     uint16 offset;           // +0: offset from beginning of segment
+//     uint16 offset;           // +0: offset from beginning of resource
 //     uint16 moveOpcode;       // +2: 0x3F3C (MOVE.W #immediate,-(SP))
-//     uint16 segment;          // +4: segment number (immediate operand)
+//     uint16 resourceId;       // +4: resource ID (immediate operand)
 //     uint16 loadSegTrap;      // +6: Instruction (absolute jump for loaded entry; _LoadSeg for unloaded entry)
 // };
 // CodeWarrior uses its own _LoadSeg to handle this custom format (as well as relocations).
@@ -42,17 +52,11 @@ struct JumpTableEntry {
     uint16_t jumpinstruction;
     // Absolute or relative address of routine (immediate; no stack push).
     int32_t jumpaddress;
-    // Routine's segment number.
-    uint16_t segment;
+    // ID of CODE resource that contains this routine.
+    uint16_t resourceId;
 } __attribute__((packed));
 
-struct CodeSegment {
-    int segment_number;
-    std::string path;
-    std::vector<char> data;  // The resource's bytes, loaded from disk; empty until then.
-};
-
-std::vector<char> __Startup__(char *data0_resource, std::vector<CodeSegment>& code_segments, uint32_t above_a5_size, uint32_t below_a5_size);
+std::vector<char> __Startup__(char *data0_resource, std::vector<CodeResource>& code_segments, uint32_t above_a5_size, uint32_t below_a5_size);
 static int __LoadSeg__(int16_t segment_number, char *code_resource, uint32_t code_size, uint32_t a5_base, uint32_t code_base, char *code_dest, char *dump_base);
 static char *__relocate__(char *xref, char *segm, uint32_t a5_base, uint32_t code1_base);
 static char *__decomp_data__(char *ptr,char *datasegment);
@@ -121,7 +125,7 @@ static bool load_file(const std::string& file_path, std::vector<char>& file_cont
 struct ResourceFiles {
     std::string code0_path;
     std::string data0_path;
-    std::vector<CodeSegment> code_segments;  // All CODE segments after CODE 0
+    std::vector<CodeResource> code_resources;  // All CODE segments after CODE 0
     std::string basename;
 };
 int dump(const ResourceFiles& resources, const std::string& dump_filename);
@@ -164,7 +168,7 @@ bool find_resource_files(const std::string& directory_path, ResourceFiles& resou
 
     std::vector<std::string> code0_candidates;
     std::vector<std::string> data0_candidates;
-    // Map the segment number to the path. In the resource_dasm export, each segment has its own file.
+    // Map the resource ID to the path. In the resource_dasm export, each resource has its own file.
     std::map<int, std::string> code_segment_map;
 
     // Find all matching BIN files from the export.
@@ -189,7 +193,7 @@ bool find_resource_files(const std::string& directory_path, ResourceFiles& resou
             data0_candidates.push_back(entry.path().string());
 
         } else if (filename.find("_CODE_") != std::string::npos && filename.find(".bin") != std::string::npos) {
-            // Extract segment number from filename (e.g., "App_CODE_1_ice.bin" -> 1).
+            // Extract resource number from filename (e.g., "App_CODE_1_ice.bin" -> 1).
             size_t code_pos = filename.find("_CODE_");
             size_t bin_pos = filename.find(".bin");
             if (code_pos != std::string::npos && bin_pos != std::string::npos) {
@@ -217,7 +221,7 @@ bool find_resource_files(const std::string& directory_path, ResourceFiles& resou
         std::cerr << "  Found " << code0_candidates.size() << " *_CODE_0.bin file(s)" << std::endl;
         std::cerr << "  Found " << data0_candidates.size() << " *_DATA_0.bin file(s)" << std::endl;
         std::cerr << "  Found " << code_segment_map.size() << " *_CODE_N.bin file(s)" << std::endl;
-        std::cerr << "Exactly one matching resource file per segment is required:" << std::endl;
+        std::cerr << "Exactly one matching resource file per resource is required:" << std::endl;
         std::cerr << "  *_CODE_0.bin" << std::endl;
         std::cerr << "  *_DATA_0.bin" << std::endl;
         std::cerr << "  *_CODE_1.bin (and optionally CODE_2.bin, CODE_3.bin, etc.)" << std::endl;
@@ -233,17 +237,17 @@ bool find_resource_files(const std::string& directory_path, ResourceFiles& resou
 
     // Convert map to sorted vector.
     for (const auto& pair : code_segment_map) {
-        CodeSegment seg;
-        seg.segment_number = pair.first;
-        seg.path = pair.second;
-        resources.code_segments.push_back(seg);
+        CodeResource resource;
+        resource.id = pair.first;
+        resource.filepath = pair.second;
+        resources.code_resources.push_back(resource);
     }
 
     std::cout << "Found resource files with basename: " << resources.basename << std::endl;
     std::cout << "  CODE_0: " << resources.code0_path << std::endl;
     std::cout << "  DATA_0: " << resources.data0_path << std::endl;
-    for (const auto& seg : resources.code_segments) {
-        std::cout << "  CODE_" << seg.segment_number << ": " << seg.path << std::endl;
+    for (const auto& seg : resources.code_resources) {
+        std::cout << "  CODE_" << seg.id << ": " << seg.filepath << std::endl;
     }
 
     return true;
@@ -302,18 +306,18 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
         data0_resource = data0_buffer.data();
     }
 
-    // Load all CODE segments from disk, each into its own buffer.
-    std::vector<CodeSegment> code_segments = resources.code_segments;
-    for (CodeSegment& segment : code_segments) {
-        if (!load_file(segment.path, segment.data)) {
+    // Load all CODE resources from disk, each into its own buffer.
+    std::vector<CodeResource> code_resources = resources.code_resources;
+    for (CodeResource& code_resource : code_resources) {
+        if (!load_file(code_resource.filepath, code_resource.data)) {
             printf("ERROR: Cannot read CODE %d resource file: %s\n",
-                   segment.segment_number, segment.path.c_str());
+                   code_resource.id, code_resource.filepath.c_str());
             return 1;
         }
 
         // An empty CODE resource is meaningless and would break the size accounting later.
-        if (segment.data.empty()) {
-            printf("ERROR: CODE %d resource file is empty\n", segment.segment_number);
+        if (code_resource.data.empty()) {
+            printf("ERROR: CODE %d resource file is empty\n", code_resource.id);
             return 1;
         }
     }
@@ -322,8 +326,8 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     // by trying to decompress and relocate stuff that isn't actually part of a CodeWarrior binary.
     const unsigned char expected_code1_start[] = {
         // NOTE: We are assuming that CODE 1 always has these jumptable fields, but this might not always be true.
-        0x00, 0x00,                          // A5 relative offset of this segment's jump table
-        0x00, 0x01,                          // number of entries in this segment's jump table
+        0x00, 0x00,                          // A5 relative offset of this resource's jump table
+        0x00, 0x01,                          // number of entries in this resource's jump table
 
         0x9D, 0xCE,                         // sub.l A6, A6
         0x59, 0x8F,                         // subq.l A7, 4
@@ -333,8 +337,8 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     };
     const size_t expected_code1_start_length = sizeof(expected_code1_start);
     bool is_codewarrior = false;
-    if (code_segments.size() > 0 && code_segments[0].segment_number == 1) {
-        const std::vector<char>& code1_data = code_segments[0].data;
+    if (code_resources.size() > 0 && code_resources[0].id == 1) {
+        const std::vector<char>& code1_data = code_resources[0].data;
         if (code1_data.size() >= expected_code1_start_length) {
             const unsigned char* code1_start = reinterpret_cast<const unsigned char*>(code1_data.data());
             is_codewarrior = (memcmp(code1_start, expected_code1_start, expected_code1_start_length) == 0);
@@ -345,8 +349,8 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
         exit(2);
     }
 
-    // Now, actually dump all code segments.
-    dump = __Startup__(data0_resource, code_segments, above_a5_size, below_a5_size);
+    // Now, actually dump all CODE resources.
+    dump = __Startup__(data0_resource, code_resources, above_a5_size, below_a5_size);
     if (dump.empty()) {
         printf("ERROR: Dumping failed\n");
         return 1;
@@ -370,23 +374,23 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     return 0;
 }
 
-// Load a segment into memory and relocate it.
-// It is not relevant for creating a dump, but the original seems to totally
-// override the system _LoadSeg and never call it from inside the app.
+// Load a CODE resource (segment) into memory and relocate it.
+// (Interestingly, the original seems to totally override the system
+//  _LoadSeg and never call it from inside the app.)
 static int __LoadSeg__(
     int16_t segment_number, char *code_resource, uint32_t code_size,
     uint32_t a5_base, uint32_t code_base, char *code_dest, char *dump_base) {
     // Parse segment header from CODE resource.
     // It seems that only CODE 2 and on have this header. CODE 1 has an abbreviated 4-byte header, which is one
     // of the reasons why it is loaded directly in __Startup__ and not by this function.
-    printf("\n*** %s: LOADING CODE SEGMENT %d ***\n", __func__, segment_number);
+    printf("\n*** %s: LOADING CODE %d ***\n", __func__, segment_number);
     SegmentHeader header;
     header.jtsoffset = (int16_t)read_be16(code_resource + 0);
     header.jtentries = (int16_t)read_be16(code_resource + 2);
     // The original seems to only use the long version.
     header.jtloffset = (int32_t)read_be32(code_resource + 4);
     header.xrefoffset = (int32_t)read_be32(code_resource + 8);
-    printf("Segment header:\n");
+    printf("Header:\n");
     printf("  jtsoffset:   0x%04x (%d)\n", header.jtsoffset, header.jtsoffset);
     printf("  jtentries:   %d\n", header.jtentries);
     printf("  jtloffset:   0x%08x\n", header.jtloffset);
@@ -398,7 +402,7 @@ static int __LoadSeg__(
 
     // Relocate this segment.
     char* xref_ptr = code_dest + header.xrefoffset;
-    printf("Relocating segment at 0x%x\n", code_base);
+    printf("Relocating CODE at 0x%x\n", code_base);
     __relocate__(xref_ptr, code_dest, a5_base, code_base);
 
     // Update jump table entries to the loaded format. We need this because Ghidra needs to be able to resolve intersegment
@@ -428,7 +432,7 @@ static int __LoadSeg__(
             printf("WARNING: Unexpected jump table instruction: %04x\n", old_instruction);
         }
         int32_t old_address = (int32_t)read_be32((char*)&entry->jumpaddress);
-        uint16_t segment = read_be16((char*)&entry->segment);
+        uint16_t segment = read_be16((char*)&entry->resourceId);
 
         // Transform this to a loaded jumptable entry. Remember this is STILL the non-standard
         // CodeWarrior format!
@@ -443,13 +447,13 @@ static int __LoadSeg__(
         int32_t new_address = old_address + code_base;
         write_be32((char*)&entry->jumpaddress, new_address);
         // Segment number stays the same.
-        write_be16((char*)&entry->segment, segment);
+        write_be16((char*)&entry->resourceId, segment);
 
         printf("  Entry %d (0x%x): 0x%08x -> 0x%08x\n",
                i, segment, old_address, new_address);
     }
 
-    printf("*** %s: CODE SEGMENT %d LOADED ***\n\n", __func__, segment_number);
+    printf("*** %s: CODE %d LOADED ***\n\n", __func__, segment_number);
     return 0;
 }
 
@@ -461,13 +465,13 @@ static int __LoadSeg__(
 /* Returns..: the fully relocated dump image (empty on failure) */
 /****************************************************************/
 std::vector<char> __Startup__(
-    char *data0_resource, std::vector<CodeSegment>& code_segments,
+    char *data0_resource, std::vector<CodeResource>& code_resources,
     uint32_t above_a5_size, uint32_t below_a5_size)
 {
-    // Calculate total size needed for all CODE segments.
+    // Calculate total size needed for all CODE resources.
     uint32_t total_code_size = 0;
-    for (const auto& seg : code_segments) {
-        total_code_size += seg.data.size();
+    for (const CodeResource& code_resource : code_resources) {
+        total_code_size += code_resource.data.size();
     }
 
 	// Allocate zeroed memory for the entire dump (system globals + all CODE resources + A5 world, in that order).
@@ -511,7 +515,7 @@ std::vector<char> __Startup__(
         char* init_data_ptr = data0_ptr + 4;  // Skip CODE 1 xrefs offset.
         char* xref_data_ptr = __decomp_data__(init_data_ptr, a5_ptr);
 
-        // Relocate the DATA segment (A5 world).
+        // Relocate DATA 0 (A5 world).
         printf("\n*** %s: RELOCATE DATA 0 (A5 world) ***\n", __func__);
         uint32_t code1_base = SYSTEM_GLOBALS_SIZE;  // CODE 1 always starts here
         xref_data_ptr = __relocate__(xref_data_ptr, a5_ptr, a5_base, code1_base);
@@ -519,33 +523,33 @@ std::vector<char> __Startup__(
         // Load and relocate all CODE segments.
         // TODO: Is it true that we must have DATA 0 for this?
         uint32_t current_code_offset = SYSTEM_GLOBALS_SIZE;
-        for (CodeSegment& seg : code_segments) {
+        for (CodeResource& code_resource : code_resources) {
             char* code_dest = dump_ptr + current_code_offset;
 
-            if (seg.segment_number == 1) {
+            if (code_resource.id == 1) {
                 // CODE 1: Direct relocation.
-                printf("Copying CODE 1 resource (%zu bytes) to dump at offset 0x%x\n",
-                       seg.data.size(), current_code_offset);
-                memcpy(code_dest, seg.data.data(), seg.data.size());
+                printf("Copying CODE 1 (%zu bytes) to dump at offset 0x%x\n",
+                       code_resource.data.size(), current_code_offset);
+                memcpy(code_dest, code_resource.data.data(), code_resource.data.size());
 
-                printf("\n*** %s: RELOCATE CODE SEGMENT 1 ***\n", __func__);
+                printf("\n*** %s: RELOCATE CODE RESOURCE 1 ***\n", __func__);
                 xref_data_ptr = __relocate__(xref_data_ptr, code_dest, a5_base, code1_base);
             } else {
-                // CODE 2+: Use __LoadSeg__ for proper segment loading.
-                int result = __LoadSeg__(seg.segment_number, seg.data.data(), seg.data.size(), a5_base, current_code_offset, code_dest, dump_ptr);
+                // CODE 2+: Use __LoadSeg__.
+                int result = __LoadSeg__(code_resource.id, code_resource.data.data(), code_resource.data.size(), a5_base, current_code_offset, code_dest, dump_ptr);
                 if (result != 0) {
                     return {};
                 }
             }
 
-            current_code_offset += seg.data.size();
+            current_code_offset += code_resource.data.size();
         }
 
         printf("A5 register: 0x%x\n", a5_base);
         printf("Below A5: 0x%x bytes\n", below_a5_size);
         printf("Above A5: 0x%x bytes\n", above_a5_size);
         printf("Total A5 world size: 0x%x bytes\n", total_a5_world_size);
-        printf("Total CODE segments size: 0x%x bytes (%zu segments)\n", total_code_size, code_segments.size());
+        printf("Total CODE resources size: 0x%x bytes (%zu segments)\n", total_code_size, code_resources.size());
         printf("CODE starts at: 0x%x\n", SYSTEM_GLOBALS_SIZE);
         printf("A5 world starts at: 0x%x\n", a5_world_offset);
         printf("Total dump size: 0x%x bytes\n", total_dump_size);
@@ -697,11 +701,9 @@ static char *__relocate__(char *xref, char *segm, uint32_t a5_base, uint32_t cod
 {
 	char *ptr = xref;
 
-	// Relocate references to DATA segment (A5).
 	printf("Relocating references to A5 world (DATA 0)...\n");
 	ptr = __reloc_compr__(ptr, segm, a5_base, a5_base);
 
-	// Relocate references to CODE segment 1.
 	printf("Relocating references to CODE 1...\n");
 	ptr = __reloc_compr__(ptr, segm, code1_base, a5_base);
 
