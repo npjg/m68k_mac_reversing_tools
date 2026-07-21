@@ -11,22 +11,10 @@
 from __future__ import annotations
 
 import argparse
-import collections
-import os
 import sys
 
-import machfs
-import macresources
-from mrcrowbar.lib.containers import mac
-
-ResourceFork = dict[bytes, dict[int, "macresources.main.Resource"]]
-
-# As described in the readme, "system globals" in the dump is the low-memory region for 68k Mac OS
-# system globals (NOT part of an A5 world for any application). Since applications can directly
-# read/write these system globals for timing, memory info, etc., we need to be able to track these
-# variables in Ghidra.
-# Memory layout: [0x0-0x10000: System globals] [0x10000+: CODE segments] [after code: A5 world]
-SYSTEM_GLOBALS_SIZE = 0x10000
+from constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
+from stream import ResourceFork, as_int8, as_int16, as_int32, read_resource_fork
 
 # Helper functions to read and write big-endian integers, mirroring the C++ read_be*/write_be*.
 # In C++ these took a `char *`; here they take a buffer plus an integer index into it.
@@ -50,17 +38,6 @@ def write_be32(buffer: bytearray, index: int, value: int) -> None:
 def write_be16(buffer: bytearray, index: int, value: int) -> None:
     buffer[index] = (value >> 8) & 0xFF
     buffer[index + 1] = value & 0xFF
-
-# Reinterpret an unsigned N-bit value as a two's-complement signed value. C++ obtained the same
-# effect through fixed-width signed integer casts (int8_t/int16_t/int32_t).
-def as_int8(value: int) -> int:
-    return value - 0x100 if value & 0x80 else value
-
-def as_int16(value: int) -> int:
-    return value - 0x10000 if value & 0x8000 else value
-
-def as_int32(value: int) -> int:
-    return value - 0x100000000 if value & 0x80000000 else value
 
 # Load a CODE resource (segment) into memory and relocate it.
 # (Interestingly, the original seems to totally override the system
@@ -168,7 +145,7 @@ def __Startup__(
 
     # Create system globals (low memory).
     # Put garbage so address 0 isn't recognized as a string.
-    dump_image[0:8] = b"J\xffA\xffN\xffK\xff"
+    dump_image[0:len(DUMP_START_SIGNATURE)] = DUMP_START_SIGNATURE
 
     # Calculate A5 position within the allocated memory. The A5 world sits after all the code, and A5 itself points
     # past the below-A5 region (application globals) to the boundary with the above-A5 region (jump table).
@@ -434,55 +411,6 @@ EXPECTED_CODE1_START = bytes([
     0xA9, 0xA0,                          # syscall GetResource
 ])
 
-
-def get_file_from_volume(image_filepath: str, path_in_volume: list[str] | None) -> tuple[bytes, ResourceFork]:
-    resources: ResourceFork = collections.defaultdict(dict)
-
-    with open(image_filepath, "rb") as f:
-        flat = f.read()
-        volume = machfs.Volume()
-        volume.read(flat)
-        print(volume)
-        if not path_in_volume:
-            raise ValueError("HFS volume was provided without path!")
-        for path_component in path_in_volume:
-            volume = volume[path_component]
-        for resource in macresources.parse_file(volume.rsrc):
-            resources[resource.type][resource.id] = resource
-
-        return volume.data, resources
-
-
-def get_file_from_macbinary(filepath: str) -> tuple[bytes, ResourceFork]:
-    file_contents = open(filepath, "rb").read()
-    macbinary = mac.MacBinary(file_contents)
-    resources: ResourceFork = collections.defaultdict(dict)
-    for resource in macresources.parse_file(macbinary.resource):
-        resources[resource.type][resource.id] = resource
-
-    return macbinary.data, resources
-
-
-def dump_file(source_filepath: str, target_filepath: str, path: list[str] | None) -> None:
-    print(f"dumping {':'.join([source_filepath] + (path if path else []))} to {target_filepath}")
-    with open(source_filepath, "rb") as f:
-        f.seek(122, os.SEEK_SET)
-        is_likely_macbinary = (int.from_bytes(f.read(2), "big") & 0xFCFF) == 0x8081
-
-        f.seek(0x400, os.SEEK_SET)
-        volume_signature = f.read(2)
-
-    is_likely_hfs_volume = volume_signature in (b"BD", b"H+")
-    if is_likely_hfs_volume:
-        _, resources = get_file_from_volume(source_filepath, path)
-    elif is_likely_macbinary:
-        _, resources = get_file_from_macbinary(source_filepath)
-    else:
-        raise ValueError(f"File {source_filepath} must be a HFS disk image or MacBinary file")
-
-    dump_file_from_resources(resources, target_filepath)
-
-
 def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> None:
     # For debugging purposes, print all the resources we found.
     for resource_type in resources:
@@ -554,6 +482,11 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
     with open(output_filepath, "wb") as dump_output:
         dump_output.write(bytes(dump))
 # endregion
+
+def dump_file(source_filepath: str, target_filepath: str, path: list[str] | None) -> None:
+    print(f"dumping {':'.join([source_filepath] + (path if path else []))} to {target_filepath}")
+    resources = read_resource_fork(source_filepath, path)
+    dump_file_from_resources(resources, target_filepath)
 
 def main() -> None:
     parser = argparse.ArgumentParser(

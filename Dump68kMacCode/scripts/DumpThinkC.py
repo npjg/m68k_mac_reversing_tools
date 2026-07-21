@@ -1,26 +1,18 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import os
 from io import BytesIO
-from mrcrowbar.lib.containers import mac
 from mrcrowbar import utils
 
-import machfs
 import macresources
 
 import argparse
-import collections
 
-ResourceFork = dict[bytes, dict[int, macresources.main.Resource]]
+from constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
+from stream import ResourceFork, as_int16, read_resource_fork
 
-# As described in the readme, "system globals" in the dump is the low-memory region for 68k Mac OS system
-# globals (NOT part of an A5 world for any application). Since applications can directly read/write these
-# system globals for timing, memory info, etc., we need to be able to track these variables in Ghidra.
-SYSTEM_GLOBALS_SIZE = 0x10000
 DUMMY_ADDR = 0xFFFFFFFF
 
-DUMP_START_SIGNATURE = b"J\xffA\xffN\xffK\xff"
 DUMP_HEADER_SIGNATURE = b"N\xffE\xffW\xffJ\xff"
 
 # M68k is big endian.
@@ -30,11 +22,6 @@ u32 = utils.from_uint32_be
 
 to_u16 = utils.to_uint16_be
 to_u32 = utils.to_uint32_be
-
-def u16_to_i16(x: int) -> int:
-    if x & 0x8000:
-        x -= 0x10000
-    return x
 
 # Stream helpers for reading/writing big-endian integers at the current position.
 # These let us walk resources and build the dump sequentially instead of tracking
@@ -86,49 +73,10 @@ def build_dump_header(code_resource_records: list[tuple[str, int, int]]) -> byte
         + bytes(record_bytes)
     )
 
-def get_file_from_volume(image_filepath: str, path_in_volume: list[str] | None) -> tuple[bytes, ResourceFork]:
-    resources: ResourceFork = collections.defaultdict(dict)
-
-    with open(image_filepath, "rb") as f:
-        flat = f.read()
-        volume = machfs.Volume()
-        volume.read(flat)
-        print(volume)
-        if not path_in_volume:
-            raise ValueError("HFS volume was provided without path!")
-        for p in path_in_volume:
-            volume = volume[p]
-        for ax in macresources.parse_file(volume.rsrc):
-            resources[ax.type][ax.id] = ax
-
-        return volume.data, resources
-
-def get_file_from_macbinary(filepath: str) -> tuple[bytes, ResourceFork]:
-    f = open(filepath, 'rb').read()
-    macbinary = mac.MacBinary(f)
-    resources: ResourceFork = collections.defaultdict(dict)
-    for i in macresources.parse_file(macbinary.resource):
-        resources[i.type][i.id] = i
-
-    return macbinary.data, resources
-
 def dump_file(source_filepath: str, target_filepath: str, path: list[str] | None) -> None:
     print(f"dumping {':'.join([source_filepath]+(path if path else []))} to {target_filepath}")
-    with open(source_filepath, "rb") as f:
-        f.seek(122, os.SEEK_SET)
-        is_likely_macbinary = (u16(f.read(2)) & 0xfcff) == 0x8081
-
-        f.seek(0x400, os.SEEK_SET)
-        is_likely_hfs_volume = f.read(2)
-
-    if is_likely_hfs_volume == b"BD" or is_likely_hfs_volume == "H+":
-        _, resources = get_file_from_volume(source_filepath, path)
-    elif is_likely_macbinary:
-        _, resources = get_file_from_macbinary(source_filepath)
-    else:
-        raise ValueError(f"File {source_filepath} must be a HFS disk image or MacBinary file")
-
-    return dump_file_from_resources(resources, target_filepath)
+    resources = read_resource_fork(source_filepath, path)
+    dump_file_from_resources(resources, target_filepath)
 
 def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> None:
     # For debugging purposes, print all the resources we found.
@@ -190,9 +138,7 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
     # Create system globals (low memory).
     # The custom dump header will be prefixed before this raw memory image.
     dump = BytesIO()
-    header = (
-        b"J\xffA\xffN\xffK\xff"  # put garbage so address 0 isn't recognized as a string
-    )
+    header = DUMP_START_SIGNATURE  # put garbage so address 0 isn't recognized as a string
     system_globals_memory = bytearray(header + bytes(SYSTEM_GLOBALS_SIZE - len(header)))
     # This app's A5 is stored in system global CurrentA5 (low memory 0x904).
     system_globals_memory[0x904:0x908] = to_u32(a5)
@@ -360,7 +306,7 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
                 if addr & 0x1:
                     print("STRS patch ", end="")
                     base = strs_base
-                    addr = u16_to_i16(addr & 0xFFFE)
+                    addr = as_int16(addr & 0xFFFE)
                 else:
                     print("A5 patch ", end="")
                     base = a5
