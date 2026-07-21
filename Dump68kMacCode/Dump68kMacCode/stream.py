@@ -83,4 +83,15 @@ def read_resource_fork(source_filepath: str, path_in_volume: list[str] | None) -
     else:
         raise ValueError(f"File {source_filepath} must be a HFS disk image or MacBinary file")
 
+    show_all_resource_types(resources)
     return resources
+
+def show_all_resource_types(resources: ResourceFork):
+    # For debugging purposes, print all the resources we found.
+    for resource_type in resources:
+        print(resource_type)
+        for j, r in resources[resource_type].items():
+            if r.name != None:
+                print(f"    {j}: {r.name}")
+            else:
+                print(f"    {j}")

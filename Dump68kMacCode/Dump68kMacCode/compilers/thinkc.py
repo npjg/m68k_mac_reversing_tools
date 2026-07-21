@@ -6,7 +6,7 @@ from mrcrowbar import utils
 
 from ..constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
 from ..dump import CodeResourceRecord, RawCodeDump
-from ..stream import ResourceFork, as_int16, get_code_resource_label
+from ..stream import ResourceFork, as_int16, get_code_resource_label, show_all_resource_types
 
 DUMMY_ADDR = 0xFFFFFFFF
 
@@ -34,15 +34,6 @@ def write_u32(stream: BytesIO, value: int) -> None:
     stream.write(to_u32(value))
 
 def dump_file_from_resources(resources: ResourceFork) -> RawCodeDump | None:
-    # For debugging purposes, print all the resources we found.
-    for resource_type in resources:
-        print(resource_type)
-        for j, r in resources[resource_type].items():
-            if r.name != None:
-                print(f"    {j}: {r.name}")
-            else:
-                print(f"    {j}")
-
     if b"CODE" not in resources:
         print("ERROR: Found no CODE resources")
         return None

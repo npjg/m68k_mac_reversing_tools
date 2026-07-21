@@ -412,15 +412,6 @@ EXPECTED_CODE1_START = bytes([
 ])
 
 def dump_file_from_resources(resources: ResourceFork) -> RawCodeDump | None:
-    # For debugging purposes, print all the resources we found.
-    for resource_type in resources:
-        print(resource_type)
-        for resource_id, resource in resources[resource_type].items():
-            if resource.name is not None:
-                print(f"    {resource_id}: {resource.name}")
-            else:
-                print(f"    {resource_id}")
-
     if b"CODE" not in resources:
         print("ERROR: Found no CODE resources")
         return None
