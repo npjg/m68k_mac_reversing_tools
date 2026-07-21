@@ -10,7 +10,7 @@ import argparse
 
 from .compilers import codewarrior, thinkc
 from .dump import build_dump_header
-from .stream import ResourceFork, read_resource_fork
+from .resource import ResourceFork, read_resource_fork
 
 # Maps the command-line dumper name to the routine that turns a resource fork into a raw memory dump.
 DUMPERS = {

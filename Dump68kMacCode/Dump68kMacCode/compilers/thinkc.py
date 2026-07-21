@@ -6,7 +6,7 @@ from mrcrowbar import utils
 
 from ..constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
 from ..dump import CodeResourceRecord, RawCodeDump
-from ..stream import ResourceFork, as_int16, get_code_resource_label, show_all_resource_types
+from ..resource import ResourceFork, as_int16, get_code_resource_label, show_all_resource_types
 
 DUMMY_ADDR = 0xFFFFFFFF
 

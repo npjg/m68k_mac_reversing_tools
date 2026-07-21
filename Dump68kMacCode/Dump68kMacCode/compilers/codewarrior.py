@@ -14,7 +14,7 @@ import sys
 
 from ..constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
 from ..dump import CodeResourceRecord, RawCodeDump
-from ..stream import ResourceFork, as_int8, as_int16, as_int32, get_code_resource_label
+from ..resource import ResourceFork, as_int8, as_int16, as_int32, get_code_resource_label
 
 # Helper functions to read and write big-endian integers, mirroring the C++ read_be*/write_be*.
 # In C++ these took a `char *`; here they take a buffer plus an integer index into it.

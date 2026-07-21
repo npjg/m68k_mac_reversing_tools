@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reading classic Mac OS resource forks, and reinterpreting the big-endian scalars within them."""
+"""Reading classic Mac OS resource forks"""
 from __future__ import annotations
 
 import collections
@@ -11,7 +11,6 @@ from mrcrowbar.lib.containers import mac
 
 # A resource fork indexed first by four-character resource type (e.g. b"CODE") and then by resource id.
 ResourceFork = dict[bytes, dict[int, macresources.main.Resource]]
-
 
 def get_code_resource_label(resource_id: int, resource: macresources.main.Resource) -> str:
     """Build a human-readable label for a CODE resource, appending its name when it has one."""
@@ -25,9 +24,7 @@ def get_code_resource_label(resource_id: int, resource: macresources.main.Resour
 
     return f"{resource_id} ({resource_name})"
 
-
-# Reinterpret an unsigned N-bit value as a two's-complement signed value. C++ obtained the same
-# effect through fixed-width signed integer casts (int8_t/int16_t/int32_t).
+# Reinterpret an unsigned N-bit value as a two's-complement signed value.
 def as_int8(value: int) -> int:
     return value - 0x100 if value & 0x80 else value
 
@@ -36,7 +33,6 @@ def as_int16(value: int) -> int:
 
 def as_int32(value: int) -> int:
     return value - 0x100000000 if value & 0x80000000 else value
-
 
 def get_file_from_volume(image_filepath: str, path_in_volume: list[str] | None) -> tuple[bytes, ResourceFork]:
     resources: ResourceFork = collections.defaultdict(dict)
@@ -55,7 +51,6 @@ def get_file_from_volume(image_filepath: str, path_in_volume: list[str] | None) 
 
         return volume.data, resources
 
-
 def get_file_from_macbinary(filepath: str) -> tuple[bytes, ResourceFork]:
     file_contents = open(filepath, "rb").read()
     macbinary = mac.MacBinary(file_contents)
@@ -64,7 +59,6 @@ def get_file_from_macbinary(filepath: str) -> tuple[bytes, ResourceFork]:
         resources[resource.type][resource.id] = resource
 
     return macbinary.data, resources
-
 
 def read_resource_fork(source_filepath: str, path_in_volume: list[str] | None) -> ResourceFork:
     """Read the resource fork from an HFS disk image or a MacBinary file, auto-detecting which."""
