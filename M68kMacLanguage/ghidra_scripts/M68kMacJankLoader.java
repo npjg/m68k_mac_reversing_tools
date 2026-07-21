@@ -5,13 +5,11 @@
 import java.io.*;
 import java.util.*;
 import generic.jar.ResourceFile;
-import ghidra.app.cmd.register.SetRegisterCmd;
 import ghidra.app.script.GhidraScript;
 import ghidra.framework.Application;
 import ghidra.program.model.address.*;
 import ghidra.program.model.data.*;
 import ghidra.program.model.listing.*;
-import ghidra.program.model.mem.MemoryAccessException;
 import ghidra.program.model.symbol.*;
 
 // To understand this script, please read Mac OS Runtime Architectures (Chapter 10 - Classic 68K Runtime Architectures).
