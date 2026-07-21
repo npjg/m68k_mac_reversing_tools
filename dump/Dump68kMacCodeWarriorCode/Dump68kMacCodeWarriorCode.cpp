@@ -255,22 +255,12 @@ bool find_resource_files(const std::string& directory_path, ResourceFiles& resou
 //endregion
 
 int dump(const ResourceFiles& resources, const std::string& dump_filename) {
-    const char* code0_filepath = resources.code0_path.c_str();
-    const char* data0_filepath = resources.data0_path.c_str();
-    const char* dump_file_cstr = dump_filename.c_str();
-
-    std::vector<char> code0_buffer;
-    std::vector<char> data0_buffer;
-    std::vector<char> dump;
-
-    // Pointers that can be modified to read through the buffers
-    char* data0_resource = nullptr;
-    char* code0_resource = nullptr;
-
     uint32_t above_a5_size = 0;
     uint32_t below_a5_size = 0;
 
     // Load CODE 0 resource (jumptable).
+    std::vector<char> code0_buffer;
+    const char* code0_filepath = resources.code0_path.c_str();
     if (code0_filepath != NULL) {
         if (!load_file(resources.code0_path, code0_buffer)) {
             printf("ERROR: Cannot read CODE 0 resource file: %s\n", code0_filepath);
@@ -279,7 +269,7 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
 
         // Parse jumptable header (big-endian). Use pointer to read through buffer for now.
         // A stream really should be used, but at least it works.
-        code0_resource = code0_buffer.data();
+        char* code0_resource = code0_buffer.data();
         above_a5_size = read_be32(code0_resource);
         code0_resource += 4;
         below_a5_size = read_be32(code0_resource);
@@ -297,13 +287,13 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     }
 
     // Load DATA 0 resource (compressed A5 world).
+    std::vector<char> data0_buffer;
+    const char* data0_filepath = resources.data0_path.c_str();
     if (data0_filepath != NULL) {
         if (!load_file(resources.data0_path, data0_buffer)) {
             printf("ERROR: Cannot read DATA 0 resource file: %s\n", data0_filepath);
             return 1;
         }
-
-        data0_resource = data0_buffer.data();
     }
 
     // Load all CODE resources from disk, each into its own buffer.
@@ -350,16 +340,17 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     }
 
     // Now, actually dump all CODE resources.
-    dump = __Startup__(data0_resource, code_resources, above_a5_size, below_a5_size);
+    std::vector<char> dump;
+    dump = __Startup__(data0_buffer.data(), code_resources, above_a5_size, below_a5_size);
     if (dump.empty()) {
         printf("ERROR: Dumping failed\n");
         return 1;
     }
 
     // Write out the dump file.
-    std::ofstream dump_output(dump_file_cstr, std::ios::binary);
+    std::ofstream dump_output(dump_filename.c_str(), std::ios::binary);
     if (!dump_output.is_open()) {
-        printf("ERROR: Cannot create dump file: %s\n", dump_file_cstr);
+        printf("ERROR: Cannot create dump file: %s\n", dump_filename.c_str());
         return 1;
     }
     dump_output.write(dump.data(), dump.size());
@@ -370,7 +361,6 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
         return 1;
     }
 
-    printf("%zu bytes written to %s\n", dump.size(), dump_file_cstr);
     return 0;
 }
 
@@ -457,13 +447,6 @@ static int __LoadSeg__(
     return 0;
 }
 
-/****************************************************************/
-/* Purpose..: The Startup routine for Applications		*/
-/* Input....: data0_resource - pointer to DATA 0 resource      */
-/* Input....: code_segments - vector of all CODE segments      */
-/* Input....: above_a5_size, below_a5_size - A5 world sizes    */
-/* Returns..: the fully relocated dump image (empty on failure) */
-/****************************************************************/
 std::vector<char> __Startup__(
     char *data0_resource, std::vector<CodeResource>& code_resources,
     uint32_t above_a5_size, uint32_t below_a5_size)
