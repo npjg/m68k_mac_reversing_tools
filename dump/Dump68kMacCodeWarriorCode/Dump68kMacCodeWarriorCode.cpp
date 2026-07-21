@@ -65,6 +65,8 @@ extern "C" {
 // globals for timing, memory info, etc., we need to be able to track these variables in Ghidra.
 const uint32_t SYSTEM_GLOBALS_SIZE = 0x10000;
 
+// TODO: This is incorrect because the A5 world is supposed to come AFTER the code.
+// Because otherwise, we have to hardcode this constant here.
 // CODE resource starting offset in the dump (after system globals + A5 world space).
 // Memory layout: [0x0-0x10000: System globals] [0x10000+: A5 world] [0x70000+: CODE segments]
 const uint32_t code_resource_offset = SYSTEM_GLOBALS_SIZE + 0x60000;
@@ -514,14 +516,14 @@ void* __Startup__(
 	// Allocate memory for the entire dump (system globals + A5 world + all CODE resources).
     const uint32_t total_a5_world_size = below_a5_size + above_a5_size;
     const uint32_t total_dump_size = code_resource_offset + total_code_size;
-    char* dump_base = (char*)malloc(total_dump_size);
-    if (dump_base == NULL) {
+    char* dump_ptr = (char*)malloc(total_dump_size);
+    if (dump_ptr == NULL) {
         return NULL;
     }
-    memset(dump_base, 0, total_dump_size);
+    memset(dump_ptr, 0, total_dump_size);
 
     // Create system globals (low memory).
-    char* system_globals = dump_base;
+    char* system_globals = dump_ptr;
     // Put garbage so address 0 isn't recognized as a string.
     system_globals[0] = 'J'; system_globals[1] = 0xFF;
     system_globals[2] = 'A'; system_globals[3] = 0xFF;
@@ -529,10 +531,10 @@ void* __Startup__(
     system_globals[6] = 'K'; system_globals[7] = 0xFF;
 
     // Calculate A5 position within the allocated memory (after system globals).
-    uint32_t a5_unrelocated = SYSTEM_GLOBALS_SIZE + below_a5_size;
-    char* a5_ptr = dump_base + SYSTEM_GLOBALS_SIZE + below_a5_size;
+    uint32_t a5_base = SYSTEM_GLOBALS_SIZE + below_a5_size;
+    char* a5_ptr = dump_ptr + SYSTEM_GLOBALS_SIZE + below_a5_size;
     // This app's A5 is stored in global var CurrentA5 (low memory 0x904).
-    write_be32(system_globals + 0x904, a5_unrelocated);
+    write_be32(system_globals + 0x904, a5_base);
 
     // Initialize global data area from DATA 0 resource.
     if (data0_resource != NULL) {
@@ -555,14 +557,14 @@ void* __Startup__(
 
         // Relocate the DATA segment (A5 world).
         printf("\n*** %s: RELOCATE DATA 0 (A5 world) ***\n", __func__);
-        uint32_t code1_unrelocated = code_resource_offset;  // CODE 1 always starts here
-        xref_data_ptr = __relocate__(xref_data_ptr, a5_ptr, a5_unrelocated, code1_unrelocated);
+        uint32_t code1_base = code_resource_offset;  // CODE 1 always starts here
+        xref_data_ptr = __relocate__(xref_data_ptr, a5_ptr, a5_base, code1_base);
 
         // Load and relocate all CODE segments.
         uint32_t current_code_offset = code_resource_offset;
         for (size_t i = 0; i < code_segments.size(); i++) {
             const CodeSegment& seg = code_segments[i];
-            char* code_dest = dump_base + current_code_offset;
+            char* code_dest = dump_ptr + current_code_offset;
 
             if (seg.segment_number == 1) {
                 // CODE 1: Direct relocation.
@@ -571,12 +573,12 @@ void* __Startup__(
                 memcpy(code_dest, segment_buffers[i], seg.size);
 
                 printf("\n*** %s: RELOCATE CODE SEGMENT 1 ***\n", __func__);
-                xref_data_ptr = __relocate__(xref_data_ptr, code_dest, a5_unrelocated, code1_unrelocated);
+                xref_data_ptr = __relocate__(xref_data_ptr, code_dest, a5_base, code1_base);
             } else {
                 // CODE 2+: Use __LoadSeg__ for proper segment loading.
-                int result = __LoadSeg__(seg.segment_number, segment_buffers[i], seg.size, a5_unrelocated, current_code_offset, code_dest, dump_base);
+                int result = __LoadSeg__(seg.segment_number, segment_buffers[i], seg.size, a5_base, current_code_offset, code_dest, dump_ptr);
                 if (result != 0) {
-                    free(dump_base);
+                    free(dump_ptr);
                     return NULL;
                 }
             }
@@ -594,7 +596,7 @@ void* __Startup__(
     }
 
     // Return the base of the allocated dump for writing
-    return dump_base;
+    return dump_ptr;
 }
 
 /****************************************************************/
