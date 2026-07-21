@@ -411,6 +411,23 @@ EXPECTED_CODE1_START = bytes([
     0xA9, 0xA0,                          # syscall GetResource
 ])
 
+def is_codewarrior_binary(resources: ResourceFork) -> bool:
+    """Report whether a resource fork looks like a CodeWarrior 68k application.
+
+    Detection keys off the distinctive startup preamble that CodeWarrior emits at the
+    very start of CODE 1; see EXPECTED_CODE1_START for the exact instruction sequence.
+    """
+    if b"CODE" not in resources:
+        return False
+
+    code_resources_by_id = resources[b"CODE"]
+    if 1 not in code_resources_by_id:
+        return False
+
+    code1_data = bytes(code_resources_by_id[1])
+    has_full_preamble = len(code1_data) >= len(EXPECTED_CODE1_START)
+    return has_full_preamble and code1_data[:len(EXPECTED_CODE1_START)] == EXPECTED_CODE1_START
+
 def dump_file_from_resources(resources: ResourceFork) -> RawCodeDump | None:
     if b"CODE" not in resources:
         print("ERROR: Found no CODE resources")
@@ -453,13 +470,9 @@ def dump_file_from_resources(resources: ResourceFork) -> RawCodeDump | None:
             return None
         code_resources.append((segment_id, code_resource_data))
 
-    # Check that CODE 1 starts with the expected instructions.
-    is_codewarrior = False
-    if code_resources and code_resources[0][0] == 1:
-        code1_data = code_resources[0][1]
-        if len(code1_data) >= len(EXPECTED_CODE1_START):
-            is_codewarrior = code1_data[:len(EXPECTED_CODE1_START)] == EXPECTED_CODE1_START
-    if not is_codewarrior:
+    # Guard against producing junk: refuse to decompress and relocate a fork that lacks the
+    # CodeWarrior CODE 1 startup preamble (e.g. when the user forced this dumper by mistake).
+    if not is_codewarrior_binary(resources):
         print("FATAL: CODE 1 does not start with expected CodeWarrior startup code. This might not be a CodeWarrior application.")
         sys.exit(2)
 
