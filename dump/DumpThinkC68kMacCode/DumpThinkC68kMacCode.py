@@ -20,6 +20,9 @@ ResourceFork = dict[bytes, dict[int, macresources.main.Resource]]
 SYSTEM_GLOBALS_SIZE = 0x10000
 DUMMY_ADDR = 0xFFFFFFFF
 
+DUMP_START_SIGNATURE = b"J\xffA\xffN\xffK\xff"
+DUMP_HEADER_SIGNATURE = b"N\xffE\xffW\xffJ\xff"
+
 # M68k is big endian.
 u16 = utils.from_uint16_be
 i16 = utils.from_int16_be
@@ -47,6 +50,41 @@ def write_u16(stream: BytesIO, value: int) -> None:
 
 def write_u32(stream: BytesIO, value: int) -> None:
     stream.write(to_u32(value))
+
+def get_code_resource_label(resource_id: int, resource: macresources.main.Resource) -> str:
+    if resource.name is None:
+        return str(resource_id)
+
+    if isinstance(resource.name, bytes):
+        resource_name = resource.name.decode("ascii", errors="replace")
+    else:
+        resource_name = str(resource.name)
+
+    return f"{resource_id} ({resource_name})"
+
+def build_dump_header(code_resource_records: list[tuple[str, int, int]]) -> bytes:
+    # Header format:
+    #   signature: NEWJ, with garbage bytes so address 0 isn't recognized as a string.
+    #   uint32: file offset where the raw system RAM dump begins.
+    #   uint32: count of CODE resource records that follow.
+    #   records:
+    #     null-terminated CODE resource label, e.g. "0 (Travel)" or just "1".
+    #     uint32: CODE resource start address in system RAM address space.
+    #     uint32: CODE resource end address in system RAM address space, exclusive.
+    record_bytes = bytearray()
+    for label, start_address, end_address in code_resource_records:
+        encoded_label = label.encode("ascii", errors="replace").replace(b"\x00", b"?")
+        record_bytes += encoded_label + b"\x00"
+        record_bytes += to_u32(start_address)
+        record_bytes += to_u32(end_address)
+
+    header_size = len(DUMP_HEADER_SIGNATURE) + 4 + 4 + len(record_bytes)
+    return (
+        DUMP_HEADER_SIGNATURE
+        + to_u32(header_size)
+        + to_u32(len(code_resource_records))
+        + bytes(record_bytes)
+    )
 
 def get_file_from_volume(image_filepath: str, path_in_volume: list[str] | None) -> tuple[bytes, ResourceFork]:
     resources: ResourceFork = collections.defaultdict(dict)
@@ -103,7 +141,7 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
                 print(f"    {j}")
 
     if b"CODE" not in resources:
-        print("ERROR: Found no executable code")
+        print("ERROR: Found no CODE resources")
         return
 
     # TODO: other resource types
@@ -150,7 +188,7 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
         a5 += len(resources[b"STRS"][0])
 
     # Create system globals (low memory).
-    # Our custom dump header goes at the very start of system RAM.
+    # The custom dump header will be prefixed before this raw memory image.
     dump = BytesIO()
     header = (
         b"J\xffA\xffN\xffK\xff"  # put garbage so address 0 isn't recognized as a string
@@ -167,6 +205,7 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
 
     # Dump all code segments. (A5 world hasn't been constructed yet.)
     segment_bases = {}
+    code_resource_records = []
     for code_resource in code_resources:
         if code_resource == 0:
             continue
@@ -175,7 +214,8 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
         first_jumptable_entry_offset = read_u16(segment_id)
         jumptable_entry_id = read_u16(segment_id)
         segment_data = BytesIO(segment_id.read())
-        segment_bases[code_resource] = dump.tell()
+        segment_base = dump.tell()
+        segment_bases[code_resource] = segment_base
 
         needs_relocations = False
         if first_jumptable_entry_offset & 0x8000:
@@ -219,7 +259,14 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
                 write_u32(segment_data, data2)
                 print(f"seg {code_resource} addr {addr:04x} ({data:08x} -> {data2:08x})")
                 crel_entry = crel_stream.read(2)
-        dump.write(segment_data.getvalue())
+
+        segment_bytes = segment_data.getvalue()
+        code_resource_records.append((
+            get_code_resource_label(code_resource, code_resources[code_resource]),
+            segment_base,
+            segment_base + len(segment_bytes),
+        ))
+        dump.write(segment_bytes)
 
     # Construct A5 world (application-level globals and jump table, SEPARATE from system globals).
     # A5 register points to the boundary between "below A5" and "above A5". In the actual dump, the
@@ -333,7 +380,8 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
     assert dump.tell() == a5
     dump.write(a5_world.getvalue())
 
-    open(output_filepath, "wb").write(dump.getvalue())
+    dump_header = build_dump_header(code_resource_records)
+    open(output_filepath, "wb").write(dump_header + dump.getvalue())
 
 def main():
     parser = argparse.ArgumentParser(description="Dump and preprocess M68K Macintosh code")

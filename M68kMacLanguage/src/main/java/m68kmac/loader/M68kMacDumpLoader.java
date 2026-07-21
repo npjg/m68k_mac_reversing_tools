@@ -2,6 +2,7 @@ package m68kmac.loader;
 
 import ghidra.app.cmd.register.SetRegisterCmd;
 import ghidra.app.util.Option;
+import ghidra.app.util.bin.BinaryReader;
 import ghidra.app.util.bin.ByteProvider;
 import ghidra.app.util.importer.MessageLog;
 import ghidra.app.util.opinion.AbstractProgramWrapperLoader;
@@ -18,7 +19,7 @@ import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
 
 import java.io.IOException;
-import java.io.InputStream;
+import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -27,21 +28,30 @@ import java.util.List;
  * Loader for custom M68k Mac dump format. Eventually, all relocations and such should be done within
  * Ghidra, but for now it is way easier to just load the finished dump.
  *
- * This loader creates two memory blocks:
- * - SYSTEM: Mac OS low memory globals (0x0 - 0x10000).
- * - PROGRAM: Code segments plus the entire A5 world (0x10000 onwards).
+ * Dumps that start with J A N K are an older format that are a pure memory dump and do NOT contain
+ * metadata about the actual names and locations of CODE resources. So they just load as two memory blocks:
+ * - SYSTEM: Mac OS low memory globals.
+ * - PROGRAM: Code segments plus the entire A5 world.
  *
- * To really do justice to the dump, we should create memory blocks for each CODE resource, as well as
- * the A5 world. That would be the cleanest, but it requires more information than is currently saved
- * in the dump. So we will live with two memory regions for now.
+ * Dumps that start with N E W J may include a prefix header with CODE resource ranges and names, so
+ * those CODE resources can be loaded into separate named memory blocks for easier navigation.
  */
 public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
 
     public static final String LOADER_NAME = "Custom M68k Mac Dump";
     private static final int SYSTEM_GLOBALS_SIZE = 0x10000;
-    private static final byte[] DUMP_SIGNATURE = {
+
+    private static final short SIGNATURE_LENGTH = 8;
+    private static final byte[] DUMP_SIGNATURE = { // J A N K
         (byte) 0x4A, (byte) 0xFF, (byte) 0x41, (byte) 0xFF,
         (byte) 0x4E, (byte) 0xFF, (byte) 0x4B, (byte) 0xFF
+    };
+
+    // This contains metadata about the CODE resources included in this dump, used
+    // to create named blocks for each CODE resource.
+    private static final byte[] DUMP_HEADER_SIGNATURE = { // N E W J
+        (byte) 0x4E, (byte) 0xFF, (byte) 0x45, (byte) 0xFF,
+        (byte) 0x57, (byte) 0xFF, (byte) 0x4A, (byte) 0xFF
     };
 
     @Override
@@ -52,22 +62,9 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
     @Override
     public Collection<LoadSpec> findSupportedLoadSpecs(ByteProvider provider) throws IOException {
         List<LoadSpec> loadSpecs = new ArrayList<>();
-
-        // Check for our dump format signature at start.
-        if (provider.length() < SYSTEM_GLOBALS_SIZE) {
-            return loadSpecs;
-        }
-        byte[] header = provider.readBytes(0, DUMP_SIGNATURE.length);
-        boolean isValidDump = true;
-        for (int i = 0; i < DUMP_SIGNATURE.length; i++) {
-            if (header[i] != DUMP_SIGNATURE[i]) {
-                isValidDump = false;
-                break;
-            }
-        }
-
-        if (isValidDump) {
+        if (getDumpMetadata(provider) != null) {
             // Add our custom language specs with both compiler variants.
+            // TODO: Store the compiler name in the dump as well.
             loadSpecs.add(new LoadSpec(this, 0,
                 new LanguageCompilerSpecPair("68000:BE:32:mac", "default"), true));
             loadSpecs.add(new LoadSpec(this, 0,
@@ -83,25 +80,23 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
 
         // Extract settings using record accessor methods.
         ByteProvider provider = settings.provider();
-        LoadSpec loadSpec = settings.loadSpec();
-        List<Option> options = settings.options();
         TaskMonitor monitor = settings.monitor();
         MessageLog log = settings.log();
 
         Memory memory = program.getMemory();
         AddressSpace space = program.getAddressFactory().getDefaultAddressSpace();
-        InputStream input = provider.getInputStream(0);
 
         try {
+            // READ THE DUMP HEADER.
+            // Read the header from the dump.
+            DumpMetadata dumpLayout = getDumpMetadata(provider);
+            long memoryImageOffset = dumpLayout.memoryImageOffset;
+            long memoryImageLength = provider.length() - memoryImageOffset;
+
             // CREATE SYSTEM BLOCK.
             // This contains low memory globals for 68k Mac OS.
             monitor.setMessage("Loading SYSTEM block...");
-            byte[] systemGlobals = new byte[SYSTEM_GLOBALS_SIZE];
-            int bytesRead = input.read(systemGlobals);
-            if (bytesRead != SYSTEM_GLOBALS_SIZE) {
-                throw new IOException("Failed to read complete SYSTEM block");
-            }
-
+            byte[] systemGlobals = provider.readBytes(memoryImageOffset, SYSTEM_GLOBALS_SIZE);
             Address systemStart = space.getAddress(0);
             MemoryBlock systemBlock = memory.createInitializedBlock(
                 "SYSTEM", systemStart, systemGlobals.length,
@@ -109,42 +104,30 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
             systemBlock.setRead(true);
             systemBlock.setWrite(true);
             systemBlock.setExecute(false);
-            systemBlock.setComment("68k Mac OS low memory globals");
+            systemBlock.setComment("m68k Classic Mac low memory globals");
             memory.setBytes(systemStart, systemGlobals);
 
-            // READ A5 VALUE for register context.
-            int a5Value = readInt(systemGlobals, 0x904);
-            if (a5Value <= SYSTEM_GLOBALS_SIZE || a5Value >= provider.length()) {
-                throw new IOException("Out-of-bounds A5 value: 0x" + Integer.toHexString(a5Value));
+            // CREATE CODE RESOURCE BLOCKS.
+            // New dumps carry CODE resource ranges in the prefix header. Older dumps still use
+            // one PROGRAM block for all non-system memory.
+            monitor.setMessage("Loading CODEs and A5 world...");
+            if (dumpLayout.codeResourceMetadataRecords.isEmpty()) {
+                // Fall back to previous behavior of putting everything in one PROGRAM block.
+                long blockSize = memoryImageLength - SYSTEM_GLOBALS_SIZE;
+                createProgramBlock(memory, space, provider, monitor, log, memoryImageOffset,
+                    SYSTEM_GLOBALS_SIZE, blockSize,
+                    "PROGRAM", "CODEs + A5 World");
+            } else {
+                createProgramBlocksFromHeader(memory, space, provider, monitor, log, dumpLayout, memoryImageLength);
             }
-
-            // CREATE PROGRAM BLOCK.
-            // Include everything onwards in the dump (code segments and entire A5 world).
-            monitor.setMessage("Loading PROGRAM block...");
-            long programStart = SYSTEM_GLOBALS_SIZE;
-            long programSize = provider.length() - programStart;
-            byte[] programData = new byte[(int)programSize];
-            bytesRead = input.read(programData);
-            if (bytesRead != programSize) {
-                throw new IOException("Failed to read complete PROGRAM block");
-            }
-
-            Address programAddr = space.getAddress(programStart);
-            MemoryBlock programBlock = memory.createInitializedBlock(
-                "PROGRAM", programAddr, programData.length,
-                (byte)0, monitor, false);
-            programBlock.setRead(true);
-            programBlock.setWrite(true);
-            programBlock.setExecute(true);
-            programBlock.setComment("Code segments and entire A5 world");
-            memory.setBytes(programAddr, programData);
-            log.appendMsg("Created PROGRAM block at 0x" +
-                Long.toHexString(programStart) + ", size: 0x" +
-                Long.toHexString(programSize));
 
             // SET A5 REGISTER FOR ENTIRE PROGRAM.
             // This is critical for resolving global data references.
             monitor.setMessage("Setting A5 register value...");
+            int a5Value = memory.getInt(space.getAddress(0x904));
+            if (a5Value <= SYSTEM_GLOBALS_SIZE || Integer.toUnsignedLong(a5Value) >= memoryImageLength) {
+                throw new IOException("Out-of-bounds A5 value: 0x" + Integer.toHexString(a5Value));
+            }
             SetRegisterCmd cmd = new SetRegisterCmd(
                 program.getLanguage().getRegister("A5"),
                 space.getMinAddress(),
@@ -157,20 +140,121 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
         } catch (Exception e) {
             log.appendException(e);
             throw new IOException("Failed to load M68k Mac dump: " + e.getMessage(), e);
-        } finally {
-            input.close();
         }
     }
 
-    /**
-     * Read a big-endian 32-bit integer from a byte array.
-     */
-    private int readInt(byte[] data, int offset) {
-        return ((data[offset] & 0xFF) << 24) |
-               ((data[offset + 1] & 0xFF) << 16) |
-               ((data[offset + 2] & 0xFF) << 8) |
-               (data[offset + 3] & 0xFF);
+    private void createProgramBlocksFromHeader(Memory memory, AddressSpace space, ByteProvider provider,
+            TaskMonitor monitor, MessageLog log, DumpMetadata dumpLayout, long memoryImageLength)
+            throws Exception {
+        // We already created the SYSTEM block, so look after that.
+        long nextAddressNotInMemoryBlock = SYSTEM_GLOBALS_SIZE;
+
+        for (CodeResourceRecord codeResourceMetadataRecord : dumpLayout.codeResourceMetadataRecords) {
+            // Make sure this resource looks sensible.
+            boolean codeStartsInSystemGlobals = codeResourceMetadataRecord.startAddress < SYSTEM_GLOBALS_SIZE;
+            boolean codeEndsBeforeStart = codeResourceMetadataRecord.endAddress <= codeResourceMetadataRecord.startAddress;
+            boolean codeIsLongerThanMemoryImage = codeResourceMetadataRecord.endAddress > memoryImageLength;
+            boolean codeOverlapsPreviousRange = codeResourceMetadataRecord.startAddress < nextAddressNotInMemoryBlock;
+            boolean codeOutOfBounds = codeStartsInSystemGlobals || codeEndsBeforeStart || codeIsLongerThanMemoryImage || codeOverlapsPreviousRange;
+            if (codeOutOfBounds) {
+                // TODO: Make this a format string for easier reading.
+                log.appendMsg("WARNING: Skipping out-of-bounds CODE resource range " +
+                    codeResourceMetadataRecord.name + " [0x" + Long.toHexString(codeResourceMetadataRecord.startAddress) +
+                    ", 0x" + Long.toHexString(codeResourceMetadataRecord.endAddress) + ")");
+                continue;
+            }
+
+            long codeSize = codeResourceMetadataRecord.endAddress - codeResourceMetadataRecord.startAddress;
+            createProgramBlock(memory, space, provider, monitor, log,
+                dumpLayout.memoryImageOffset, codeResourceMetadataRecord.startAddress, codeSize,
+                makeBlockName("CODE", codeResourceMetadataRecord.name), "CODE " + codeResourceMetadataRecord.name);
+
+            nextAddressNotInMemoryBlock = Math.max(nextAddressNotInMemoryBlock, codeResourceMetadataRecord.endAddress);
+        }
+
+        // TODO: The A5 world can be before OR after all CODE resources.
+        if (nextAddressNotInMemoryBlock < memoryImageLength) {
+            createProgramBlock(memory, space, provider, monitor, log, dumpLayout.memoryImageOffset,
+                nextAddressNotInMemoryBlock, memoryImageLength - nextAddressNotInMemoryBlock,
+                "A5WORLD", "A5 World");
+        }
     }
+
+    private void createProgramBlock(Memory memory, AddressSpace space, ByteProvider provider,
+            TaskMonitor monitor, MessageLog log, long memoryImageOffset, long startAddress, long size,
+            String name, String comment) throws Exception {
+        byte[] data = provider.readBytes(memoryImageOffset + startAddress, size);
+        Address blockAddress = space.getAddress(startAddress);
+        String blockName = getUniqueBlockName(memory, name);
+        MemoryBlock block = memory.createInitializedBlock(blockName, blockAddress, data.length, (byte)0, monitor, false);
+
+        block.setRead(true);
+        block.setWrite(true);
+        block.setExecute(startAddress >= SYSTEM_GLOBALS_SIZE);
+        block.setComment(comment);
+        memory.setBytes(blockAddress, data);
+
+        // log.appendMsg("Created " + blockName + " block at 0x" + Long.toHexString(startAddress) + ", size: 0x" + Long.toHexString(size));
+    }
+
+    private DumpMetadata getDumpMetadata(ByteProvider provider) throws IOException {
+        BinaryReader reader = new BinaryReader(provider, false);
+        byte[] signature = reader.readNextByteArray(SIGNATURE_LENGTH);
+        boolean hasOldDumpSignature = Arrays.equals(signature, DUMP_SIGNATURE);
+        if (hasOldDumpSignature) {
+            // If the dump file starts at offset 0 with the old JANK signature,
+            // then the raw memory image begins at file offset 0 (there is no metadata to parse).
+            // log.appendMsg("Detected raw image (no metadata)");
+            return new DumpMetadata(0, List.of());
+        }
+
+        // Make sure we have the new dump format before we go any further.
+        boolean hasNewDumpSignature = Arrays.equals(signature, DUMP_HEADER_SIGNATURE);
+        if (!hasNewDumpSignature) {
+            // log.appendMsg("Detected raw image (no metadata)");
+            return null;
+        }
+
+        long memoryImageOffset = Integer.toUnsignedLong(reader.readNextInt());
+        long recordCount = Integer.toUnsignedLong(reader.readNextInt());
+        if (memoryImageOffset < reader.getPointerIndex() || memoryImageOffset + SYSTEM_GLOBALS_SIZE > provider.length()) {
+            // TODO: Throw exception here
+            return null;
+        }
+
+        List<CodeResourceRecord> codeResources = new ArrayList<>();
+        for (long i = 0; i < recordCount; i++) {
+            // Read each null-terminated CODE resource name.
+            String name = reader.readNextAsciiString();
+            long startAddress = Integer.toUnsignedLong(reader.readNextInt());
+            long endAddress = Integer.toUnsignedLong(reader.readNextInt());
+            codeResources.add(new CodeResourceRecord(name, startAddress, endAddress));
+        }
+        codeResources.sort((left, right) -> Long.compare(left.startAddress, right.startAddress));
+
+        return new DumpMetadata(memoryImageOffset, codeResources);
+    }
+
+    private String makeBlockName(String prefix, String name) {
+        String sanitizedName = name.replaceAll("[^A-Za-z0-9_.() -]", "_").trim();
+        if (sanitizedName.isEmpty()) {
+            sanitizedName = "unnamed";
+        }
+        return prefix + " " + sanitizedName;
+    }
+
+    private String getUniqueBlockName(Memory memory, String requestedName) {
+        String blockName = requestedName;
+        int suffix = 1;
+        while (memory.getBlock(blockName) != null) {
+            blockName = requestedName + "." + suffix++;
+        }
+        return blockName;
+    }
+
+    private record DumpMetadata(long memoryImageOffset, List<CodeResourceRecord> codeResourceMetadataRecords) {}
+
+    private record CodeResourceRecord(String name, long startAddress, long endAddress) {}
 
     @Override
     public List<Option> getDefaultOptions(ByteProvider provider, LoadSpec loadSpec,
