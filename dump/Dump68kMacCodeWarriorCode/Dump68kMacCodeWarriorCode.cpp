@@ -91,6 +91,26 @@ static inline void write_be16(char* ptr, uint16_t value) {
 	ptr[1] = value & 0xFF;
 }
 
+// Reads an entire binary file into a byte buffer. We can't really treat these as streams
+// because the underlying CodeWarrior loader code operates on raw pointers.
+static bool load_file(const std::string& file_path, std::vector<char>& file_contents) {
+	std::ifstream file_stream(file_path, std::ios::binary | std::ios::ate);
+	if (!file_stream.is_open()) {
+		return false;
+	}
+
+	// tellg() on an ate stream gives the size; a negative result means the query failed.
+	std::streamsize file_size = file_stream.tellg();
+	if (file_size < 0) {
+		return false;
+	}
+	file_stream.seekg(0, std::ios::beg);
+
+	file_contents.resize(static_cast<size_t>(file_size));
+	file_stream.read(file_contents.data(), file_size);
+	bool entire_file_read = file_stream && file_stream.gcount() == file_size;
+	return entire_file_read;
+}
 
 //region C++ File I/O Wrappers
 // C++ functionality to help with reading from the resource_dasm resource export directory. This directory looks like this:
@@ -235,11 +255,10 @@ bool find_resource_files(const std::string& directory_path, ResourceFiles& resou
 //endregion
 
 int dump(const ResourceFiles& resources, const std::string& dump_filename) {
-    const char* code0_file = resources.code0_path.c_str();
-    const char* data0_file = resources.data0_path.c_str();
+    const char* code0_filepath = resources.code0_path.c_str();
+    const char* data0_filepath = resources.data0_path.c_str();
     const char* dump_file_cstr = dump_filename.c_str();
 
-    // Use vectors for automatic memory management
     std::vector<char> code0_buffer;
     std::vector<char> data0_buffer;
     std::vector<std::vector<char>> code_segment_buffers;  // One buffer per CODE segment
@@ -255,21 +274,9 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     uint32_t total_code_size = 0;
 
     // Load CODE 0 resource (jumptable).
-    if (code0_file != NULL) {
-        // Open the file.
-        std::ifstream code0_stream(code0_file, std::ios::binary | std::ios::ate);
-        if (!code0_stream.is_open()) {
-            printf("ERROR: Cannot open CODE 0 resource file: %s\n", code0_file);
-            return 1;
-        }
-
-        // Read the file.
-        std::size_t file_size = code0_stream.tellg();
-        code0_stream.seekg(0, std::ios::beg);
-        code0_buffer.resize(file_size);
-        code0_stream.read(code0_buffer.data(), file_size);
-        if (!code0_stream || code0_stream.gcount() != static_cast<std::streamsize>(file_size)) {
-            printf("ERROR: Failed to read CODE 0 resource file\n");
+    if (code0_filepath != NULL) {
+        if (!load_file(resources.code0_path, code0_buffer)) {
+            printf("ERROR: Cannot read CODE 0 resource file: %s\n", code0_filepath);
             return 1;
         }
 
@@ -293,21 +300,9 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     }
 
     // Load DATA 0 resource (compressed A5 world).
-    if (data0_file != NULL) {
-        // Open the file.
-        std::ifstream data0_stream(data0_file, std::ios::binary | std::ios::ate);
-        if (!data0_stream.is_open()) {
-            printf("ERROR: Cannot open DATA 0 resource file: %s\n", data0_file);
-            return 1;
-        }
-
-        // Read the file.
-        std::size_t file_size = data0_stream.tellg();
-        data0_stream.seekg(0, std::ios::beg);
-        data0_buffer.resize(file_size);
-        data0_stream.read(data0_buffer.data(), file_size);
-        if (!data0_stream || data0_stream.gcount() != static_cast<std::streamsize>(file_size)) {
-            printf("ERROR: Failed to read DATA 0 resource file\n");
+    if (data0_filepath != NULL) {
+        if (!load_file(resources.data0_path, data0_buffer)) {
+            printf("ERROR: Cannot read DATA 0 resource file: %s\n", data0_filepath);
             return 1;
         }
 
@@ -318,35 +313,23 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     code_segment_buffers.resize(resources.code_segments.size());
     std::vector<CodeSegment> code_segments = resources.code_segments;
     for (size_t i = 0; i < code_segments.size(); i++) {
-        // Open the file.
         const std::string& code_file = code_segments[i].path;
-        std::ifstream code_stream(code_file, std::ios::binary | std::ios::ate);
-        if (!code_stream.is_open()) {
-            printf("ERROR: Cannot open CODE %d resource file: %s\n",
+        if (!load_file(code_file, code_segment_buffers[i])) {
+            printf("ERROR: Cannot read CODE %d resource file: %s\n",
                    code_segments[i].segment_number, code_file.c_str());
             return 1;
         }
 
-        // Get file size.
-        std::size_t file_size = code_stream.tellg();
-        code_stream.seekg(0, std::ios::beg);
-        if (file_size <= 0) {
-            printf("ERROR: Invalid CODE %d resource file size: %ld\n",
-                   code_segments[i].segment_number, file_size);
+        // An empty CODE resource is meaningless and would break the size accounting below.
+        std::size_t file_size = code_segment_buffers[i].size();
+        if (file_size == 0) {
+            printf("ERROR: Invalid CODE %d resource file size: 0\n",
+                   code_segments[i].segment_number);
             return 1;
         }
 
         code_segments[i].size = file_size;
         total_code_size += file_size;
-
-        // Read the file.
-        code_segment_buffers[i].resize(file_size);
-        code_stream.read(code_segment_buffers[i].data(), file_size);
-        if (!code_stream || code_stream.gcount() != static_cast<std::streamsize>(file_size)) {
-            printf("ERROR: Failed to read CODE %d resource file\n",
-                   code_segments[i].segment_number);
-            return 1;
-        }
     }
 
     // Check that CODE 1 starts with the expected instructions. This is a guard against creating a junk dump
