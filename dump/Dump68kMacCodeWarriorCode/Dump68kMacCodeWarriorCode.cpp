@@ -49,10 +49,10 @@ struct JumpTableEntry {
 struct CodeSegment {
     int segment_number;
     std::string path;
-    uint32_t size;
+    std::vector<char> data;  // The resource's bytes, loaded from disk; empty until then.
 };
 
-std::vector<char> __Startup__(char *data0_resource, std::vector<CodeSegment>& code_segments, uint32_t above_a5_size, uint32_t below_a5_size, char* segment_buffers[]);
+std::vector<char> __Startup__(char *data0_resource, std::vector<CodeSegment>& code_segments, uint32_t above_a5_size, uint32_t below_a5_size);
 static int __LoadSeg__(int16_t segment_number, char *code_resource, uint32_t code_size, uint32_t a5_base, uint32_t code_base, char *code_dest, char *dump_base);
 static char *__relocate__(char *xref, char *segm, uint32_t a5_base, uint32_t code1_base);
 static char *__decomp_data__(char *ptr,char *datasegment);
@@ -236,7 +236,6 @@ bool find_resource_files(const std::string& directory_path, ResourceFiles& resou
         CodeSegment seg;
         seg.segment_number = pair.first;
         seg.path = pair.second;
-        seg.size = 0;  // Will be filled in later when we load the file
         resources.code_segments.push_back(seg);
     }
 
@@ -258,7 +257,6 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
 
     std::vector<char> code0_buffer;
     std::vector<char> data0_buffer;
-    std::vector<std::vector<char>> code_segment_buffers;  // One buffer per CODE segment
     std::vector<char> dump;
 
     // Pointers that can be modified to read through the buffers
@@ -304,26 +302,20 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
         data0_resource = data0_buffer.data();
     }
 
-    // Load all CODE segments from disk.
-    code_segment_buffers.resize(resources.code_segments.size());
+    // Load all CODE segments from disk, each into its own buffer.
     std::vector<CodeSegment> code_segments = resources.code_segments;
-    for (size_t i = 0; i < code_segments.size(); i++) {
-        const std::string& code_file = code_segments[i].path;
-        if (!load_file(code_file, code_segment_buffers[i])) {
+    for (CodeSegment& segment : code_segments) {
+        if (!load_file(segment.path, segment.data)) {
             printf("ERROR: Cannot read CODE %d resource file: %s\n",
-                   code_segments[i].segment_number, code_file.c_str());
+                   segment.segment_number, segment.path.c_str());
             return 1;
         }
 
-        // An empty CODE resource is meaningless and would break the size accounting below.
-        std::size_t file_size = code_segment_buffers[i].size();
-        if (file_size == 0) {
-            printf("ERROR: Invalid CODE %d resource file size: 0\n",
-                   code_segments[i].segment_number);
+        // An empty CODE resource is meaningless and would break the size accounting later.
+        if (segment.data.empty()) {
+            printf("ERROR: CODE %d resource file is empty\n", segment.segment_number);
             return 1;
         }
-
-        code_segments[i].size = file_size;
     }
 
     // Check that CODE 1 starts with the expected instructions. This is a guard against creating a junk dump
@@ -342,8 +334,9 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     const size_t expected_code1_start_length = sizeof(expected_code1_start);
     bool is_codewarrior = false;
     if (code_segments.size() > 0 && code_segments[0].segment_number == 1) {
-        if (code_segment_buffers[0].size() >= expected_code1_start_length) {
-            const unsigned char* code1_start = reinterpret_cast<const unsigned char*>(code_segment_buffers[0].data());
+        const std::vector<char>& code1_data = code_segments[0].data;
+        if (code1_data.size() >= expected_code1_start_length) {
+            const unsigned char* code1_start = reinterpret_cast<const unsigned char*>(code1_data.data());
             is_codewarrior = (memcmp(code1_start, expected_code1_start, expected_code1_start_length) == 0);
         }
     }
@@ -353,11 +346,7 @@ int dump(const ResourceFiles& resources, const std::string& dump_filename) {
     }
 
     // Now, actually dump all code segments.
-    std::vector<char*> segment_buffer_ptrs(code_segment_buffers.size());
-    for (size_t i = 0; i < code_segment_buffers.size(); i++) {
-        segment_buffer_ptrs[i] = code_segment_buffers[i].data();
-    }
-    dump = __Startup__(data0_resource, code_segments, above_a5_size, below_a5_size, segment_buffer_ptrs.data());
+    dump = __Startup__(data0_resource, code_segments, above_a5_size, below_a5_size);
     if (dump.empty()) {
         printf("ERROR: Dumping failed\n");
         return 1;
@@ -469,17 +458,16 @@ static int __LoadSeg__(
 /* Input....: data0_resource - pointer to DATA 0 resource      */
 /* Input....: code_segments - vector of all CODE segments      */
 /* Input....: above_a5_size, below_a5_size - A5 world sizes    */
-/* Input....: segment_buffers - array of pointers to segment data */
 /* Returns..: the fully relocated dump image (empty on failure) */
 /****************************************************************/
 std::vector<char> __Startup__(
     char *data0_resource, std::vector<CodeSegment>& code_segments,
-    uint32_t above_a5_size, uint32_t below_a5_size, char* segment_buffers[])
+    uint32_t above_a5_size, uint32_t below_a5_size)
 {
     // Calculate total size needed for all CODE segments.
     uint32_t total_code_size = 0;
     for (const auto& seg : code_segments) {
-        total_code_size += seg.size;
+        total_code_size += seg.data.size();
     }
 
 	// Allocate zeroed memory for the entire dump (system globals + all CODE resources + A5 world, in that order).
@@ -531,27 +519,26 @@ std::vector<char> __Startup__(
         // Load and relocate all CODE segments.
         // TODO: Is it true that we must have DATA 0 for this?
         uint32_t current_code_offset = SYSTEM_GLOBALS_SIZE;
-        for (size_t i = 0; i < code_segments.size(); i++) {
-            const CodeSegment& seg = code_segments[i];
+        for (CodeSegment& seg : code_segments) {
             char* code_dest = dump_ptr + current_code_offset;
 
             if (seg.segment_number == 1) {
                 // CODE 1: Direct relocation.
-                printf("Copying CODE 1 resource (%u bytes) to dump at offset 0x%x\n",
-                       seg.size, current_code_offset);
-                memcpy(code_dest, segment_buffers[i], seg.size);
+                printf("Copying CODE 1 resource (%zu bytes) to dump at offset 0x%x\n",
+                       seg.data.size(), current_code_offset);
+                memcpy(code_dest, seg.data.data(), seg.data.size());
 
                 printf("\n*** %s: RELOCATE CODE SEGMENT 1 ***\n", __func__);
                 xref_data_ptr = __relocate__(xref_data_ptr, code_dest, a5_base, code1_base);
             } else {
                 // CODE 2+: Use __LoadSeg__ for proper segment loading.
-                int result = __LoadSeg__(seg.segment_number, segment_buffers[i], seg.size, a5_base, current_code_offset, code_dest, dump_ptr);
+                int result = __LoadSeg__(seg.segment_number, seg.data.data(), seg.data.size(), a5_base, current_code_offset, code_dest, dump_ptr);
                 if (result != 0) {
                     return {};
                 }
             }
 
-            current_code_offset += seg.size;
+            current_code_offset += seg.data.size();
         }
 
         printf("A5 register: 0x%x\n", a5_base);
@@ -563,7 +550,7 @@ std::vector<char> __Startup__(
         printf("A5 world starts at: 0x%x\n", a5_world_offset);
         printf("Total dump size: 0x%x bytes\n", total_dump_size);
     }
-.
+
     return dump_image;
 }
 
