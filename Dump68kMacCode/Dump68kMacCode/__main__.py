@@ -18,6 +18,13 @@ DUMPERS = {
     "thinkc": thinkc.dump_code,
 }
 
+# Maps the dumper name to the M68kMacLanguage Ghidra variant recorded in the dump header, so the
+# loader can select the matching processor language automatically. THINK C uses the base variant.
+GHIDRA_LANGUAGE_IDS = {
+    "codewarrior": "codewarrior",
+    "thinkc": "default",
+}
+
 def detect_dumper(resources: ResourceFork) -> str:
     """Choose which compiler runtime produced this binary."""
     if codewarrior.is_codewarrior_binary(resources):
@@ -51,8 +58,9 @@ def main() -> None:
     if memory_dump is None:
         return  # The dumper already reported why.
 
-    # Prepend the common dump header so Ghidra can locate each CODE segment within the flat image.
-    dump_header = build_dump_header(memory_dump.code_resource_records)
+    # Prepend the common dump header so Ghidra can locate each CODE segment within the flat image
+    # and select the processor language variant matching the compiler runtime we used.
+    dump_header = build_dump_header(GHIDRA_LANGUAGE_IDS[selected_dumper], memory_dump.code_resource_records)
     with open(args.output_filepath, "wb") as output_file:
         output_file.write(dump_header + memory_dump.image)
 

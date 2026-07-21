@@ -41,6 +41,10 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
     public static final String LOADER_NAME = "Custom M68k Mac Dump";
     private static final int SYSTEM_GLOBALS_SIZE = 0x10000;
 
+    private static final String DEFAULT_COMPILER_SPEC_ID = "default";
+    private static final String CODEWARRIOR_COMPILER_SPEC_ID = "codewarrior";
+    private static final String LANGUAGE_ID = "68000:BE:32:mac";
+
     private static final short SIGNATURE_LENGTH = 8;
     private static final byte[] DUMP_SIGNATURE = { // J A N K
         (byte) 0x4A, (byte) 0xFF, (byte) 0x41, (byte) 0xFF,
@@ -62,13 +66,15 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
     @Override
     public Collection<LoadSpec> findSupportedLoadSpecs(ByteProvider provider) throws IOException {
         List<LoadSpec> loadSpecs = new ArrayList<>();
-        if (getDumpMetadata(provider) != null) {
-            // Add our custom language specs with both compiler variants.
-            // TODO: Store the compiler name in the dump as well.
+        DumpMetadata dumpMetadata = getDumpMetadata(provider);
+        if (dumpMetadata != null) {
+            // Offer both compiler variants, but mark the one the dump producer recorded in the header
+            // as preferred so it is selected automatically.
+            boolean codewarriorIsPreferred = CODEWARRIOR_COMPILER_SPEC_ID.equals(dumpMetadata.compilerSpecId);
             loadSpecs.add(new LoadSpec(this, 0,
-                new LanguageCompilerSpecPair("68000:BE:32:mac", "default"), true));
+                new LanguageCompilerSpecPair(LANGUAGE_ID, DEFAULT_COMPILER_SPEC_ID), !codewarriorIsPreferred));
             loadSpecs.add(new LoadSpec(this, 0,
-                new LanguageCompilerSpecPair("68000:BE:32:mac", "codewarrior"), true));
+                new LanguageCompilerSpecPair(LANGUAGE_ID, CODEWARRIOR_COMPILER_SPEC_ID), codewarriorIsPreferred));
         }
 
         return loadSpecs;
@@ -204,8 +210,9 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
         if (hasOldDumpSignature) {
             // If the dump file starts at offset 0 with the old JANK signature,
             // then the raw memory image begins at file offset 0 (there is no metadata to parse).
+            // This format doesn't name a compiler, so assume the default variant.
             // log.appendMsg("Detected raw image (no metadata)");
-            return new DumpMetadata(0, List.of());
+            return new DumpMetadata(0, DEFAULT_COMPILER_SPEC_ID, List.of());
         }
 
         // Make sure we have the new dump format before we go any further.
@@ -215,6 +222,7 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
             return null;
         }
 
+        String compilerSpecId = reader.readNextAsciiString();
         long memoryImageOffset = Integer.toUnsignedLong(reader.readNextInt());
         long recordCount = Integer.toUnsignedLong(reader.readNextInt());
         if (memoryImageOffset < reader.getPointerIndex() || memoryImageOffset + SYSTEM_GLOBALS_SIZE > provider.length()) {
@@ -232,7 +240,7 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
         }
         codeResources.sort((left, right) -> Long.compare(left.startAddress, right.startAddress));
 
-        return new DumpMetadata(memoryImageOffset, codeResources);
+        return new DumpMetadata(memoryImageOffset, compilerSpecId, codeResources);
     }
 
     private String makeBlockName(String prefix, String name) {
@@ -252,7 +260,7 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
         return blockName;
     }
 
-    private record DumpMetadata(long memoryImageOffset, List<CodeResourceRecord> codeResourceMetadataRecords) {}
+    private record DumpMetadata(long memoryImageOffset, String compilerSpecId, List<CodeResourceRecord> codeResourceMetadataRecords) {}
 
     private record CodeResourceRecord(String name, long startAddress, long endAddress) {}
 
