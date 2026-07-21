@@ -4,14 +4,11 @@ from __future__ import annotations
 from io import BytesIO
 from mrcrowbar import utils
 
-import macresources
-
 from ..constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
-from ..stream import ResourceFork, as_int16, read_resource_fork
+from ..dump import CodeResourceRecord, MemoryDump
+from ..stream import ResourceFork, as_int16, get_code_resource_label
 
 DUMMY_ADDR = 0xFFFFFFFF
-
-DUMP_HEADER_SIGNATURE = b"N\xffE\xffW\xffJ\xff"
 
 # M68k is big endian.
 u16 = utils.from_uint16_be
@@ -36,46 +33,7 @@ def write_u16(stream: BytesIO, value: int) -> None:
 def write_u32(stream: BytesIO, value: int) -> None:
     stream.write(to_u32(value))
 
-def get_code_resource_label(resource_id: int, resource: macresources.main.Resource) -> str:
-    if resource.name is None:
-        return str(resource_id)
-
-    if isinstance(resource.name, bytes):
-        resource_name = resource.name.decode("ascii", errors="replace")
-    else:
-        resource_name = str(resource.name)
-
-    return f"{resource_id} ({resource_name})"
-
-def build_dump_header(code_resource_records: list[tuple[str, int, int]]) -> bytes:
-    # Header format:
-    #   signature: NEWJ, with garbage bytes so address 0 isn't recognized as a string.
-    #   uint32: file offset where the raw system RAM dump begins.
-    #   uint32: count of CODE resource records that follow.
-    #   records:
-    #     null-terminated CODE resource label, e.g. "0 (Travel)" or just "1".
-    #     uint32: CODE resource start address in system RAM address space.
-    #     uint32: CODE resource end address in system RAM address space, exclusive.
-    record_bytes = bytearray()
-    for label, start_address, end_address in code_resource_records:
-        encoded_label = label.encode("ascii", errors="replace").replace(b"\x00", b"?")
-        record_bytes += encoded_label + b"\x00"
-        record_bytes += to_u32(start_address)
-        record_bytes += to_u32(end_address)
-
-    header_size = len(DUMP_HEADER_SIGNATURE) + 4 + 4 + len(record_bytes)
-    return (
-        DUMP_HEADER_SIGNATURE
-        + to_u32(header_size)
-        + to_u32(len(code_resource_records))
-        + bytes(record_bytes)
-    )
-
-def dump_file(source_filepath: str, target_filepath: str, source_filepath_in_hfs_image: list[str] | None) -> None:
-    resources = read_resource_fork(source_filepath, source_filepath_in_hfs_image)
-    dump_file_from_resources(resources, target_filepath)
-
-def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> None:
+def dump_file_from_resources(resources: ResourceFork) -> MemoryDump | None:
     # For debugging purposes, print all the resources we found.
     for resource_type in resources:
         print(resource_type)
@@ -87,7 +45,7 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
 
     if b"CODE" not in resources:
         print("ERROR: Found no CODE resources")
-        return
+        return None
 
     # TODO: other resource types
     code_resources = resources[b"CODE"]
@@ -204,7 +162,7 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
                 crel_entry = crel_stream.read(2)
 
         segment_bytes = segment_data.getvalue()
-        code_resource_records.append((
+        code_resource_records.append(CodeResourceRecord(
             get_code_resource_label(code_resource, code_resources[code_resource]),
             segment_base,
             segment_base + len(segment_bytes),
@@ -323,5 +281,4 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
     assert dump.tell() == a5
     dump.write(a5_world.getvalue())
 
-    dump_header = build_dump_header(code_resource_records)
-    open(output_filepath, "wb").write(dump_header + dump.getvalue())
+    return MemoryDump(dump.getvalue(), code_resource_records)

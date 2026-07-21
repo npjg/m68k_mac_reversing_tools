@@ -9,11 +9,13 @@ from __future__ import annotations
 import argparse
 
 from .compilers import codewarrior, thinkc
+from .dump import build_dump_header
+from .stream import read_resource_fork
 
-# Maps the command-line dumper name to the routine that dumps that compiler runtime's output.
+# Maps the command-line dumper name to the routine that turns a resource fork into a raw memory dump.
 DUMPERS = {
-    "codewarrior": codewarrior.dump_file,
-    "thinkc": thinkc.dump_file,
+    "codewarrior": codewarrior.dump_file_from_resources,
+    "thinkc": thinkc.dump_file_from_resources,
 }
 
 def main() -> None:
@@ -32,8 +34,18 @@ def main() -> None:
     args = parser.parse_args()
 
     path_in_disk_image = args.path_in_disk_image.split(":") if args.path_in_disk_image else None
-    dump_file = DUMPERS[args.dumper]
-    dump_file(args.source_filepath, args.output_filepath, path_in_disk_image)
+
+    # Read the resource fork, then dump it to a raw memory image with the selected compiler runtime.
+    resources = read_resource_fork(args.source_filepath, path_in_disk_image)
+    dump_from_resources = DUMPERS[args.dumper]
+    memory_dump = dump_from_resources(resources)
+    if memory_dump is None:
+        return  # The dumper already reported why.
+
+    # Prepend the common dump header so Ghidra can locate each CODE segment within the flat image.
+    dump_header = build_dump_header(memory_dump.code_resource_records)
+    with open(args.output_filepath, "wb") as output_file:
+        output_file.write(dump_header + memory_dump.image)
 
 if __name__ == "__main__":
     main()

@@ -13,7 +13,8 @@ from __future__ import annotations
 import sys
 
 from ..constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
-from ..stream import ResourceFork, as_int8, as_int16, as_int32, read_resource_fork
+from ..dump import CodeResourceRecord, MemoryDump
+from ..stream import ResourceFork, as_int8, as_int16, as_int32, get_code_resource_label
 
 # Helper functions to read and write big-endian integers, mirroring the C++ read_be*/write_be*.
 # In C++ these took a `char *`; here they take a buffer plus an integer index into it.
@@ -410,7 +411,7 @@ EXPECTED_CODE1_START = bytes([
     0xA9, 0xA0,                          # syscall GetResource
 ])
 
-def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> None:
+def dump_file_from_resources(resources: ResourceFork) -> MemoryDump | None:
     # For debugging purposes, print all the resources we found.
     for resource_type in resources:
         print(resource_type)
@@ -422,7 +423,7 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
 
     if b"CODE" not in resources:
         print("ERROR: Found no CODE resources")
-        return
+        return None
 
     code_resources_by_id = resources[b"CODE"]
 
@@ -430,7 +431,7 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
     # world sizes from here; it rebuilds the jump table from each CODE resource plus DATA 0.
     if 0 not in code_resources_by_id:
         print("ERROR: Cannot find CODE 0 resource (jumptable)")
-        return
+        return None
     code0_resource = bytes(code_resources_by_id[0])
     above_a5_size: int = read_be32(code0_resource, 0)
     below_a5_size: int = read_be32(code0_resource, 4)
@@ -446,7 +447,7 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
     # DATA 0 resource holds the compressed A5 world (init data plus the relocation streams).
     if b"DATA" not in resources or 0 not in resources[b"DATA"]:
         print("ERROR: Cannot find DATA 0 resource")
-        return
+        return None
     data0_resource = bytes(resources[b"DATA"][0])
 
     # Collect CODE 1+ resources, sorted by id so the size accounting matches the original loader.
@@ -458,7 +459,7 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
         # An empty CODE resource is meaningless and would break the size accounting later.
         if len(code_resource_data) == 0:
             print(f"ERROR: CODE {segment_id} resource is empty")
-            return
+            return None
         code_resources.append((segment_id, code_resource_data))
 
     # Check that CODE 1 starts with the expected instructions.
@@ -475,13 +476,20 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
     dump = __Startup__(data0_resource, code_resources, above_a5_size, below_a5_size)
     if len(dump) == 0:
         print("ERROR: Dumping failed")
-        return
+        return None
 
-    # Write out the raw dump image (byte-for-byte identical to the C++ dumper's output).
-    with open(output_filepath, "wb") as dump_output:
-        dump_output.write(bytes(dump))
+    # Record where each CODE segment landed. __Startup__ lays the segments out consecutively,
+    # in this same sorted order, starting right after the system globals; mirror that accounting.
+    code_resource_records: list[CodeResourceRecord] = []
+    segment_start_address = SYSTEM_GLOBALS_SIZE
+    for segment_id, code_resource_data in code_resources:
+        segment_end_address = segment_start_address + len(code_resource_data)
+        code_resource_records.append(CodeResourceRecord(
+            get_code_resource_label(segment_id, code_resources_by_id[segment_id]),
+            segment_start_address,
+            segment_end_address,
+        ))
+        segment_start_address = segment_end_address
+
+    return MemoryDump(bytes(dump), code_resource_records)
 # endregion
-
-def dump_file(source_filepath: str, target_filepath: str, source_filepath_in_hfs_image: list[str] | None) -> None:
-    resources = read_resource_fork(source_filepath, source_filepath_in_hfs_image)
-    dump_file_from_resources(resources, target_filepath)

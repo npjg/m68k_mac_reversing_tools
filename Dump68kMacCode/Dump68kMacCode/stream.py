@@ -13,6 +13,19 @@ from mrcrowbar.lib.containers import mac
 ResourceFork = dict[bytes, dict[int, macresources.main.Resource]]
 
 
+def get_code_resource_label(resource_id: int, resource: macresources.main.Resource) -> str:
+    """Build a human-readable label for a CODE resource, appending its name when it has one."""
+    if resource.name is None:
+        return str(resource_id)
+
+    if isinstance(resource.name, bytes):
+        resource_name = resource.name.decode("ascii", errors="replace")
+    else:
+        resource_name = str(resource.name)
+
+    return f"{resource_id} ({resource_name})"
+
+
 # Reinterpret an unsigned N-bit value as a two's-complement signed value. C++ obtained the same
 # effect through fixed-width signed integer casts (int8_t/int16_t/int32_t).
 def as_int8(value: int) -> int:
