@@ -71,9 +71,8 @@ def build_dump_header(code_resource_records: list[tuple[str, int, int]]) -> byte
         + bytes(record_bytes)
     )
 
-def dump_file(source_filepath: str, target_filepath: str, path: list[str] | None) -> None:
-    print(f"dumping {':'.join([source_filepath]+(path if path else []))} to {target_filepath}")
-    resources = read_resource_fork(source_filepath, path)
+def dump_file(source_filepath: str, target_filepath: str, source_filepath_in_hfs_image: list[str] | None) -> None:
+    resources = read_resource_fork(source_filepath, source_filepath_in_hfs_image)
     dump_file_from_resources(resources, target_filepath)
 
 def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> None:

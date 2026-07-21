@@ -26,12 +26,12 @@ def main() -> None:
     )
     parser.add_argument("source_filepath", help="Source file (disk image or MacBinary file)")
     parser.add_argument("output_filepath")
-    parser.add_argument("--path", help='For disk images, path in the image to read (e.g. "dir1:dir2:file")')
+    parser.add_argument("--path-in-disk-image", '-p', help='For disk images, path in the image to read (e.g. "dir1:dir2:file")')
     args = parser.parse_args()
 
-    path = args.path.split(":") if args.path else None
+    path_in_disk_image = args.path.split(":") if args.path_in_disk_image else None
     dump_file = DUMPERS[args.dumper]
-    dump_file(args.source_filepath, args.output_filepath, path)
+    dump_file(args.source_filepath, args.output_filepath, path_in_disk_image)
 
 if __name__ == "__main__":
     main()
