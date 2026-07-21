@@ -6,8 +6,6 @@ from mrcrowbar import utils
 
 import macresources
 
-import argparse
-
 from constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
 from stream import ResourceFork, as_int16, read_resource_fork
 
@@ -328,16 +326,3 @@ def dump_file_from_resources(resources: ResourceFork, output_filepath: str) -> N
 
     dump_header = build_dump_header(code_resource_records)
     open(output_filepath, "wb").write(dump_header + dump.getvalue())
-
-def main():
-    parser = argparse.ArgumentParser(description="Dump and preprocess M68K Macintosh code")
-    parser.add_argument("source_filepath", help="Source file (disk image or MacBinary file)")
-    parser.add_argument("output_filepath")
-    parser.add_argument("--path", help="For disk images, path in the image to read (e.g. \"dir1:dir2:file\")")
-    args = parser.parse_args()
-
-    path = args.path.split(":") if args.path else None
-    dump_file(args.source_filepath, args.output_filepath, path)
-
-if __name__ == "__main__":
-    main()
