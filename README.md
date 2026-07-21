@@ -3,7 +3,7 @@
 
 **Disadvantage(s)**: Stack-based syscall arguments are ugly
 
-1. Make a dump using one of the [dumpers](dump/) corresponding to your compiler.
+1. Make a dump using one of the [dumpers](Dump68kMacCode) corresponding to your compiler.
 2. Install the `M68kMacLanguage` Ghidra extension provided in this repo.
 
    1. Build the extension with `build.sh` in the extension directory.
