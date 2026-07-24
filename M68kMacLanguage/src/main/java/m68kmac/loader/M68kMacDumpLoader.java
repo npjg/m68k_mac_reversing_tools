@@ -174,10 +174,10 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
             boolean codeOverlapsPreviousRange = codeResourceMetadataRecord.startAddress < nextAddressNotInMemoryBlock;
             boolean codeOutOfBounds = codeStartsInSystemGlobals || codeEndsBeforeStart || codeIsLongerThanMemoryImage || codeOverlapsPreviousRange;
             if (codeOutOfBounds) {
-                // TODO: Make this a format string for easier reading.
-                log.appendMsg("WARNING: Skipping out-of-bounds CODE resource range " +
-                    codeResourceMetadataRecord.name + " [0x" + Long.toHexString(codeResourceMetadataRecord.startAddress) +
-                    ", 0x" + Long.toHexString(codeResourceMetadataRecord.endAddress) + ")");
+                log.appendMsg(String.format("Skipping out-of-bounds CODE resource range %s [0x%x, 0x%x)",
+                    codeResourceMetadataRecord.name,
+                    codeResourceMetadataRecord.startAddress,
+                    codeResourceMetadataRecord.endAddress));
                 continue;
             }
 
@@ -189,7 +189,6 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
             nextAddressNotInMemoryBlock = Math.max(nextAddressNotInMemoryBlock, codeResourceMetadataRecord.endAddress);
         }
 
-        // TODO: The A5 world can be before OR after all CODE resources.
         if (nextAddressNotInMemoryBlock < memoryImageLength) {
             createProgramBlock(memory, space, provider, monitor, log, dumpLayout.memoryImageOffset,
                 nextAddressNotInMemoryBlock, memoryImageLength - nextAddressNotInMemoryBlock,
@@ -237,8 +236,7 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
         long memoryImageOffset = Integer.toUnsignedLong(reader.readNextInt());
         long recordCount = Integer.toUnsignedLong(reader.readNextInt());
         if (memoryImageOffset < reader.getPointerIndex() || memoryImageOffset + SYSTEM_GLOBALS_SIZE > provider.length()) {
-            // TODO: Throw exception here
-            return null;
+            throw new IOException("Invalid dump metadata: memory image offset out of bounds");
         }
 
         List<CodeResourceRecord> codeResources = new ArrayList<>();
