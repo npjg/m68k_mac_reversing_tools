@@ -18,6 +18,8 @@ import ghidra.program.model.mem.MemoryBlock;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
 
+import m68kmac.common.DumperProvidedSymbolNames;
+
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.ArrayList;
@@ -143,6 +145,15 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
                 log.appendMsg("WARNING: Failed to set A5 register value");
             }
 
+            // STASH RECOVERED SYMBOL NAMES.
+            // Park the raw symbol-name section on the program so the symbols analyzer can later resolve
+            // inline short MacsBug names to full names (if available). It runs as a separate pass and only has the
+            // program to work from, so this must live in the database rather than in loader-local state.
+            if (dumpLayout.symbolNameSection.length > 0) {
+                program.getOptions(DumperProvidedSymbolNames.OPTIONS_GROUP)
+                    .setByteArray(DumperProvidedSymbolNames.SECTION_OPTION, dumpLayout.symbolNameSection);
+            }
+
         } catch (Exception e) {
             log.appendException(e);
             throw new IOException("Failed to load M68k Mac dump: " + e.getMessage(), e);
@@ -212,7 +223,7 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
             // then the raw memory image begins at file offset 0 (there is no metadata to parse).
             // This format doesn't name a compiler, so assume the default variant.
             // log.appendMsg("Detected raw image (no metadata)");
-            return new DumpMetadata(0, DEFAULT_COMPILER_SPEC_ID, List.of());
+            return new DumpMetadata(0, DEFAULT_COMPILER_SPEC_ID, List.of(), new byte[0]);
         }
 
         // Make sure we have the new dump format before we go any further.
@@ -240,7 +251,15 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
         }
         codeResources.sort((left, right) -> Long.compare(left.startAddress, right.startAddress));
 
-        return new DumpMetadata(memoryImageOffset, compilerSpecId, codeResources);
+        // Everything between the CODE records and the raw memory image is the full symbol-name section
+        // Older dumps end right after the CODE records, leaving nothing here, so this is empty for them.
+        // We hand the raw bytes to the symbols analyzer to parse.
+        long symbolNameSectionLength = memoryImageOffset - reader.getPointerIndex();
+        byte[] symbolNameSection = symbolNameSectionLength > 0
+            ? reader.readNextByteArray((int) symbolNameSectionLength)
+            : new byte[0];
+
+        return new DumpMetadata(memoryImageOffset, compilerSpecId, codeResources, symbolNameSection);
     }
 
     private String makeBlockName(String prefix, String name) {
@@ -260,7 +279,8 @@ public class M68kMacDumpLoader extends AbstractProgramWrapperLoader {
         return blockName;
     }
 
-    private record DumpMetadata(long memoryImageOffset, String compilerSpecId, List<CodeResourceRecord> codeResourceMetadataRecords) {}
+    private record DumpMetadata(long memoryImageOffset, String compilerSpecId,
+        List<CodeResourceRecord> codeResourceMetadataRecords, byte[] symbolNameSection) {}
 
     private record CodeResourceRecord(String name, long startAddress, long endAddress) {}
 

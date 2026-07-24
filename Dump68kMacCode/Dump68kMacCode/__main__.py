@@ -8,13 +8,19 @@ from __future__ import annotations
 
 import argparse
 
-from .compilers import codewarrior, thinkc
+from .compilers import codewarrior, thinkc_lib, thinkc
 from .dump import build_dump_header
 from .resource import ResourceFork, read_resource_fork
 
-# Maps the command-line dumper name to the routine that turns a resource fork into a raw memory dump.
+DETECTORS = {
+    "codewarrior": codewarrior.can_dump,
+    "thinkc_lib": thinkc_lib.can_dump,
+    "thinkc": thinkc.can_dump,
+}
+
 DUMPERS = {
     "codewarrior": codewarrior.dump_code,
+    "thinkc_lib": thinkc_lib.dump_code,
     "thinkc": thinkc.dump_code,
 }
 
@@ -22,14 +28,15 @@ DUMPERS = {
 # loader can select the matching processor language automatically. THINK C uses the base variant.
 GHIDRA_LANGUAGE_IDS = {
     "codewarrior": "codewarrior",
+    "thinkc_lib": "default",
     "thinkc": "default",
 }
 
 def detect_dumper(resources: ResourceFork) -> str:
     """Choose which compiler runtime produced this binary."""
-    if codewarrior.is_codewarrior_binary(resources):
-        return "codewarrior"
-    return "thinkc"
+    for compiler_name, compiler_can_dump in DETECTORS.items():
+        if compiler_can_dump(resources):
+            return compiler_name
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -59,7 +66,11 @@ def main() -> None:
 
     # Prepend the common dump header so Ghidra can locate each CODE segment within the flat image
     # and select the processor language variant matching the compiler runtime we used.
-    dump_header = build_dump_header(GHIDRA_LANGUAGE_IDS[selected_dumper], memory_dump.code_resource_records)
+    dump_header = build_dump_header(
+        GHIDRA_LANGUAGE_IDS[selected_dumper],
+        memory_dump.code_resource_records,
+        memory_dump.symbol_name_records,
+    )
     with open(args.output_filepath, "wb") as output_file:
         output_file.write(dump_header + memory_dump.image)
 

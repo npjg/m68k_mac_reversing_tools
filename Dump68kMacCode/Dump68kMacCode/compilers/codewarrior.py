@@ -411,28 +411,22 @@ EXPECTED_CODE1_START = bytes([
     0xA9, 0xA0,                          # syscall GetResource
 ])
 
-def is_codewarrior_binary(resources: ResourceFork) -> bool:
-    """Report whether a resource fork looks like a CodeWarrior 68k application.
-
-    Detection keys off the distinctive startup preamble that CodeWarrior emits at the
-    very start of CODE 1; see EXPECTED_CODE1_START for the exact instruction sequence.
-    """
+def can_dump(resources: ResourceFork) -> bool:
     if b"CODE" not in resources:
+        print("INFO: Can't dump because there are no CODE resources")
         return False
 
     code_resources_by_id = resources[b"CODE"]
     if 1 not in code_resources_by_id:
         return False
 
+    # Detection keys off the distinctive startup preamble that CodeWarrior emits at the
+    # very start of CODE 1.
     code1_data = bytes(code_resources_by_id[1])
     has_full_preamble = len(code1_data) >= len(EXPECTED_CODE1_START)
     return has_full_preamble and code1_data[:len(EXPECTED_CODE1_START)] == EXPECTED_CODE1_START
 
 def dump_code(resources: ResourceFork) -> RawCodeDump | None:
-    if b"CODE" not in resources:
-        print("ERROR: Found no CODE resources")
-        return None
-
     code_resources_by_id = resources[b"CODE"]
 
     # Parse jumptable header (big-endian) from CODE 0. The CodeWarrior startup only needs the A5
@@ -469,12 +463,6 @@ def dump_code(resources: ResourceFork) -> RawCodeDump | None:
             print(f"ERROR: CODE {segment_id} resource is empty")
             return None
         code_resources.append((segment_id, code_resource_data))
-
-    # Guard against producing junk: refuse to decompress and relocate a fork that lacks the
-    # CodeWarrior CODE 1 startup preamble (e.g. when the user forced this dumper by mistake).
-    if not is_codewarrior_binary(resources):
-        print("FATAL: CODE 1 does not start with expected CodeWarrior startup code. This might not be a CodeWarrior application.")
-        sys.exit(2)
 
     # Now, actually dump all CODE resources.
     dump = __Startup__(data0_resource, code_resources, above_a5_size, below_a5_size)

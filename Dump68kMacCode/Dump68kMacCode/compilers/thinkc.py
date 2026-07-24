@@ -2,52 +2,31 @@
 from __future__ import annotations
 
 from io import BytesIO
-from mrcrowbar import utils
 
 from ..constants import DUMP_START_SIGNATURE, SYSTEM_GLOBALS_SIZE
 from ..dump import CodeResourceRecord, RawCodeDump
 from ..resource import ResourceFork, as_int16, get_code_resource_label, show_all_resource_types
+from ..stream import i16, read_u16, read_u32, to_u32, u16, write_u16, write_u32
 
 DUMMY_ADDR = 0xFFFFFFFF
 
-# M68k is big endian.
-u16 = utils.from_uint16_be
-i16 = utils.from_int16_be
-u32 = utils.from_uint32_be
+def can_dump(resources: ResourceFork) -> bool:
+    if b"CODE" not in resources:
+        print("INFO: Can't dump because there are no CODE resources")
+        return False
+    code_resources = resources[b"CODE"]
+    if not code_resources.get(0):
+        print("INFO: Can't dump becasue there is no CODE 0. THINK C applications must have CODE 0. Maybe this is a THINK C library?")
+        return False
 
-to_u16 = utils.to_uint16_be
-to_u32 = utils.to_uint32_be
-
-# Stream helpers for reading/writing big-endian integers at the current position.
-# These let us walk resources and build the dump sequentially instead of tracking
-# manual byte offsets everywhere.
-def read_u16(stream: BytesIO) -> int:
-    return u16(stream.read(2))
-
-def read_u32(stream: BytesIO) -> int:
-    return u32(stream.read(4))
-
-def write_u16(stream: BytesIO, value: int) -> None:
-    stream.write(to_u16(value))
-
-def write_u32(stream: BytesIO, value: int) -> None:
-    stream.write(to_u32(value))
+    return True
 
 def dump_code(resources: ResourceFork) -> RawCodeDump | None:
-    if b"CODE" not in resources:
-        print("ERROR: Found no CODE resources")
-        return None
-
-    # TODO: other resource types
+    # Parse the jumptable.
+    # See "The Jump Table" in Mac OS Runtime Architectures - Chapter 10: Classic 68K Runtime Architectures.
     code_resources = resources[b"CODE"]
     crels = resources[b"CREL"]
 
-    # Parse the jumptable.
-    # See "The Jump Table" in Mac OS Runtime Architectures - Chapter 10: Classic 68K Runtime Architectures.
-    has_jumptable = False
-    # This is a default in case we don't have a CODE 0.
-    # It is NOT the same as SYSTEM_GLOBALS_SIZE.
-    below_a5_size = 0x10000
     if code_resources.get(0):
         # Parse the jumptable header from CODE 0.
         code_resource_zero = BytesIO(bytes(code_resources[0]))
@@ -59,9 +38,9 @@ def dump_code(resources: ResourceFork) -> RawCodeDump | None:
         assert jump_table_size == len(code_resources[0]) - 0x10
         assert jump_table_offset == 0x20
         jumptable = BytesIO(code_resource_zero.read())
-        has_jumptable = True
     else:
-        print("WARNING: Didn't find CODE resource 0, assuming this is a library")
+        # THINK C libraries (like After Dark modules) just don't have CODE 0 at all.
+        raise ValueError("ERROR: Didn't find CODE 0, this could be a library library, not an application.")
 
     # Calculate the value of A5.
     # TODO: This is a bit awkward because we are trying to predict the value of A5. Instead, restructure
@@ -165,7 +144,7 @@ def dump_code(resources: ResourceFork) -> RawCodeDump | None:
     # A5 world appears AFTER all the CODE resources.
     a5_world = BytesIO()
     a5_world.write(b"\x00" * 32) # TODO: Account for QuickDraw global vars.
-    if has_jumptable:
+    if jumptable is not None:
         JUMPTABLE_ENTRY_SIZE = 8
         entry_number = 0
         entry = jumptable.read(JUMPTABLE_ENTRY_SIZE)
